@@ -53,13 +53,17 @@
     const RATE_GUARD_WINDOW_MS = 1800;
 
     function stepDownToGrid(rate, step = SPEED_GRID) {
-        const epsilon = 1e-6;
-        return Number((Math.floor(rate / step - epsilon) * step).toFixed(2));
+        const cur = Number(rate) || 1.0;
+        const epsilon = 1e-4;
+        const snapped = Math.floor((cur - epsilon) / step) * step;
+        return Number(Math.max(MIN_SPEED, Math.round(snapped * 100) / 100).toFixed(2));
     }
 
     function stepUpToGrid(rate, step = SPEED_GRID) {
-        const epsilon = 1e-6;
-        return Number((Math.ceil(rate / step + epsilon) * step).toFixed(2));
+        const cur = Number(rate) || 1.0;
+        const epsilon = 1e-4;
+        const snapped = Math.ceil((cur + epsilon) / step) * step;
+        return Number(Math.min(MAX_SPEED, Math.round(snapped * 100) / 100).toFixed(2));
     }
 
     function formatTime(sec) {
@@ -432,6 +436,8 @@
     let isInternalRateChange = false;
     let accumulatedPinchDelta = 0;
     let trackpadPinchTimer = null;
+    let lastTrackpadGestureTime = 0;
+    let trackpadGestureStreak = 0;
 
     /* =========================================================
        Audio Controller (Lazy Web Audio API Volume Boost & EQ)
@@ -4770,6 +4776,8 @@
         trackpadGestureVideo = null;
         trackpadGestureLatestDelta = 0;
         accumulatedPinchDelta = 0;
+        lastTrackpadGestureTime = 0;
+        trackpadGestureStreak = 0;
         clearTimeout(trackpadPinchTimer);
         trackpadPinchTimer = null;
         clearTimeout(trackpadGestureIdleTimer);
@@ -4779,9 +4787,9 @@
     document.addEventListener('wheel', e => {
         if (eventIsInsideController(e)) return;
 
-        // 1. Trackpad Pinch Gesture (Ctrl + Wheel) -> Speed Control
+        // 1. Trackpad Pinch / Ctrl+Wheel Gesture -> Speed Control (Fine 0.05x & Exponential like Enhancer for YouTube)
         // CRITICAL: Plain two-finger scrolling on a laptop touchpad MUST NEVER mutate speed!
-        // We require e.ctrlKey (pinch simulation) AND a deliberate accumulated threshold (45px)
+        // We require e.ctrlKey (pinch simulation) AND a responsive threshold
         // so micro-movements during page scrolling are completely ignored!
         if (e.ctrlKey) {
             if (!prefs.trackpadSpeedEnabled) return;
@@ -4800,17 +4808,41 @@
             clearTimeout(trackpadPinchTimer);
             trackpadPinchTimer = setTimeout(() => {
                 accumulatedPinchDelta = 0;
-            }, 300);
+                trackpadGestureStreak = 0;
+            }, 250);
 
-            // Deliberate pinch threshold (45px) prevents two-finger scroll twitch
-            const PINCH_STEP_THRESHOLD = 45;
+            // Responsive pinch threshold (24px) gives immediate fluid response
+            const PINCH_STEP_THRESHOLD = 24;
             if (Math.abs(accumulatedPinchDelta) >= PINCH_STEP_THRESHOLD) {
                 const stepUp = accumulatedPinchDelta > 0;
                 accumulatedPinchDelta = 0;
                 const curRate = Number(target.playbackRate) || 1;
-                const nextRate = stepUp ? Math.min(MAX_SPEED, stepUpToGrid(curRate))
-                                        : Math.max(MIN_SPEED, stepDownToGrid(curRate));
+
+                // Track gesture velocity for exponential scaling (like Enhancer for YouTube)
+                const now = performance.now();
+                if (now - lastTrackpadGestureTime < 160) {
+                    trackpadGestureStreak = Math.min(8, trackpadGestureStreak + 1);
+                } else {
+                    trackpadGestureStreak = 1;
+                }
+                lastTrackpadGestureTime = now;
+
+                // Fine step base: 0.05x (Enhancer for YouTube standard)
+                // Scales progressively for higher speeds (>=2.0x and >=3.0x)
+                let baseStep = 0.05;
+                if (curRate >= 3.0) baseStep = 0.20;
+                else if (curRate >= 2.0) baseStep = 0.10;
+
+                // Exponential acceleration: continuous/rapid swipes smoothly scale step size
+                const streakMultiplier = 1 + Math.max(0, (trackpadGestureStreak - 2) * 0.5);
+                const stepAmount = Math.max(0.05, Math.round((baseStep * streakMultiplier) * 20) / 20);
+
+                let nextRate = stepUp ? curRate + stepAmount : curRate - stepAmount;
+                nextRate = Math.round(nextRate * 20) / 20; // clean 0.05 increments (1.05, 1.10, 1.35, 1.40, etc.)
+                nextRate = Number(Math.min(MAX_SPEED, Math.max(MIN_SPEED, nextRate)).toFixed(2));
+
                 setPlaybackRate(target, nextRate, true);
+                if (toolbarBuilt) syncToolbar();
             }
             return;
         }
@@ -4950,6 +4982,9 @@
         // Editable-element protection: never intercept typing in comment or search boxes!
         if (isEditableEvent(e)) return;
 
+        const v = getVideo();
+        if (!v) return;
+
         // Space: Universal Play / Pause (one physical press = one action, no repeats)
         if (isSpaceKey(e) && !e.ctrlKey && !e.altKey && !e.metaKey) {
             e.preventDefault();
@@ -4964,10 +4999,56 @@
                 try { document.activeElement.blur(); } catch (_) {}
             }
 
-            const v = getVideo();
-            if (v) {
-                togglePlayPause(v);
+            togglePlayPause(v);
+            return;
+        }
+
+        // [ or BracketLeft: Snap down to nearest lower standard speed grid (e.g. 1.4x -> 1.25x -> 1.0x -> 0.75x)
+        if ((e.key === '[' || e.code === 'BracketLeft') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            try { e.stopImmediatePropagation(); } catch (_) {}
+
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                try { document.activeElement.blur(); } catch (_) {}
             }
+
+            const curRate = (typeof v.playbackRate === 'number' && v.playbackRate > 0) ? v.playbackRate : (prefs.speed || 1.0);
+            const rate = stepDownToGrid(curRate);
+            setPlaybackRate(v, rate, true);
+            if (toolbarBuilt) syncToolbar();
+            return;
+        }
+
+        // ] or BracketRight: Snap up to nearest higher standard speed grid (e.g. 1.4x -> 1.5x -> 1.75x -> 2.0x)
+        if ((e.key === ']' || e.code === 'BracketRight') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            try { e.stopImmediatePropagation(); } catch (_) {}
+
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                try { document.activeElement.blur(); } catch (_) {}
+            }
+
+            const curRate = (typeof v.playbackRate === 'number' && v.playbackRate > 0) ? v.playbackRate : (prefs.speed || 1.0);
+            const rate = stepUpToGrid(curRate);
+            setPlaybackRate(v, rate, true);
+            if (toolbarBuilt) syncToolbar();
+            return;
+        }
+
+        // R or KeyR: Reset speed to 1.0x
+        if ((e.key === 'r' || e.key === 'R' || e.code === 'KeyR') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            try { e.stopImmediatePropagation(); } catch (_) {}
+
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                try { document.activeElement.blur(); } catch (_) {}
+            }
+
+            setPlaybackRate(v, 1.0, true);
+            if (toolbarBuilt) syncToolbar();
             return;
         }
 
@@ -4989,9 +5070,6 @@
             e.stopPropagation();
             return;
         }
-
-        const v = getVideo();
-        if (!v) return;
 
         // Shift + Up/Down for Volume
         if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
@@ -5070,29 +5148,6 @@
                 e.preventDefault();
                 e.stopPropagation();
                 seekVideo(v, prefs.seekSeconds);
-                break;
-
-            case '[': {
-                e.preventDefault();
-                e.stopPropagation();
-                const rate = Math.max(MIN_SPEED, stepDownToGrid(v.playbackRate));
-                setPlaybackRate(v, rate, true);
-                break;
-            }
-
-            case ']': {
-                e.preventDefault();
-                e.stopPropagation();
-                const rate = Math.min(MAX_SPEED, stepUpToGrid(v.playbackRate));
-                setPlaybackRate(v, rate, true);
-                break;
-            }
-
-            case 'r':
-            case 'R':
-                e.preventDefault();
-                e.stopPropagation();
-                setPlaybackRate(v, 1.0, true);
                 break;
 
             case 'm':
