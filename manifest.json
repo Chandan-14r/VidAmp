@@ -3,7 +3,7 @@
   "name": "VidAmp- Universal Video Enhancer & Speed Controller",
   "short_name": "VidAmp",
   "version": "6.1.0",
-  "description": "Supercharge YouTube & web videos with touchpad speed pinch, 1-click speed popover, ambient glow bias lighting, audio bass/vocal boost, frame stepper, and A-B clips.",
+  "description": "Touchpad speed gestures, ambient glow, studio EQ, frame stepper, and smart video downloader for YouTube & web videos.",
   "permissions": [
     "storage",
     "activeTab"
