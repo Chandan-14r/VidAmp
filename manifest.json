@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "VidAmp- Universal Video Enhancer & Speed Controller",
+  "short_name": "VidAmp",
+  "version": "6.1.0",
+  "description": "Supercharge YouTube & web videos with touchpad speed pinch, 1-click speed popover, ambient glow bias lighting, audio bass/vocal boost, frame stepper, and A-B clips.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "vidamp-enhancer@community.addons",
+      "strict_min_version": "109.0"
+    }
+  }
+}

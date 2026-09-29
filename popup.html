@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VidAmp: Universal Video Enhancer & Speed Controller</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg-primary: #121214;
+    --bg-secondary: #1a1a1e;
+    --bg-card: #222228;
+    --bg-card-hover: #2a2a32;
+    --accent: #4c9aff;
+    --accent-hover: #3884f0;
+    --text-primary: #f0f0f2;
+    --text-secondary: #9a9aa2;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-subtle: rgba(255, 255, 255, 0.04);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    width: 340px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  header {
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-secondary);
+  }
+
+  header h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    letter-spacing: 0.01em;
+  }
+
+  header .badge {
+    background: rgba(76, 154, 255, 0.16);
+    color: var(--accent);
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  /* Navigation Tabs */
+  .tabs {
+    display: flex;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 0 8px;
+    gap: 4px;
+    overflow-x: auto;
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 9px 11px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color .15s, border-color .15s;
+    white-space: nowrap;
+  }
+
+  .tab-btn:hover { color: var(--text-primary); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-content {
+    display: none;
+    padding: 14px 16px;
+    max-height: 380px;
+    overflow-y: auto;
+  }
+
+  .tab-content.active { display: block; }
+
+  .section-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .card:last-child { margin-bottom: 0; }
+
+  .row-between {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .row-between:last-child { margin-bottom: 0; }
+
+  .label-group {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .item-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .item-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 1px;
+  }
+
+  /* Switch styling */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 38px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background-color: #383842;
+    transition: .2s;
+    border-radius: 20px;
+  }
+
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .2s;
+    border-radius: 50%;
+  }
+
+  input:checked + .slider {
+    background-color: var(--accent);
+  }
+
+  input:checked + .slider:before {
+    transform: translateX(18px);
+  }
+
+  /* Form inputs */
+  select, input[type="range"] {
+    accent-color: var(--accent);
+  }
+
+  select {
+    background: #18181c;
+    color: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .range-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-top: 6px;
+  }
+
+  .range-container input[type="range"] {
+    flex: 1;
+  }
+
+  .range-val {
+    font-size: 11px;
+    color: var(--text-secondary);
+    width: 34px;
+    text-align: right;
+  }
+
+  .btn-action {
+    background: #2b2b32;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    width: 100%;
+    font-weight: 500;
+    transition: background .15s;
+  }
+
+  .btn-action:hover { background: #3c3c46; }
+  .btn-action:disabled { opacity: 0.5; cursor: default; }
+
+  .btn-danger {
+    background: #4a2424;
+    color: #ff9999;
+  }
+  .btn-danger:hover { background: #622f2f; }
+
+  .site-status {
+    background: #18181c;
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .site-status strong {
+    color: var(--text-primary);
+  }
+
+  footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+
+  .status-live {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #4cd964;
+    font-weight: 600;
+  }
+
+  .status-live::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    background: #4cd964;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 6px #4cd964;
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <h1>
+      <img src="icons/icon48.png" alt="VidAmp" style="width: 22px; height: 22px; border-radius: 6px; vertical-align: middle; box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);">
+      <span style="background: linear-gradient(135deg, #38bdf8 0%, #ec4899 50%, #f97316 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; letter-spacing: 0.03em;">VidAmp</span>
+    </h1>
+    <div class="badge" style="background: rgba(129, 140, 248, 0.18); color: #a5b4fc; border: 1px solid rgba(129, 140, 248, 0.3);">Pro v6.1</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="tab-gestures">Gestures</button>
+    <button class="tab-btn" data-tab="tab-playback">Playback</button>
+    <button class="tab-btn" data-tab="tab-audio-video">Audio & Video</button>
+    <button class="tab-btn" data-tab="tab-player">Player</button>
+    <button class="tab-btn" data-tab="tab-site">Site</button>
+  </nav>
+
+  <!-- GESTURES TAB -->
+  <div id="tab-gestures" class="tab-content active">
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Trackpad Pinch Speed</span>
+          <span class="item-desc">Two-finger pinch on trackpad adjusts speed</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="trackpad-speed-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="row-between" style="margin-top: 8px;">
+        <div class="label-group">
+          <span class="item-title">Reverse Pinch Direction</span>
+          <span class="item-desc">Invert speed up / slow down direction</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="trackpad-reverse-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div style="margin-top: 10px;">
+        <span class="item-title">Sensitivity</span>
+        <div class="range-container">
+          <input type="range" id="trackpad-sensitivity" min="25" max="100" step="5" value="55">
+          <span id="trackpad-sensitivity-val" class="range-val">55px</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Mouse Speed Drag</span>
+          <span class="item-desc">Move mouse in opposite directions to inc/dec speed</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="mouse-drag-speed-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="item-desc" style="margin-top: 6px;">
+        Right-click drag (or Shift + Left drag) on video: Up/Right increases speed, Down/Left decreases speed.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Alt + Wheel Video Controls</span>
+          <span class="item-desc">Hold Alt while scrolling: Left Brightness · Right Volume</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="gesture-zones-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="item-desc" style="margin-top: 6px;">
+        Normal two-finger scrolling naturally scrolls the page without changing speed or volume.
+      </div>
+    </div>
+  </div>
+
+  <!-- PLAYBACK TAB -->
+  <div id="tab-playback" class="tab-content">
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Seek Step Amount</span>
+          <span class="item-desc">Seconds to seek with Arrow keys</span>
+        </div>
+        <select id="seek-select">
+          <option value="5">5s</option>
+          <option value="10">10s</option>
+          <option value="15">15s</option>
+          <option value="30">30s</option>
+        </select>
+      </div>
+      <div class="row-between" style="margin-top: 10px;">
+        <div class="label-group">
+          <span class="item-title">Keyboard Shortcuts</span>
+          <span class="item-desc">Space, arrows, brackets, PiP, Fullscreen</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="shortcuts-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Auto Theater Mode</span>
+          <span class="item-desc">Automatically expand YouTube player</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="auto-theater-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- AUDIO & VIDEO TAB -->
+  <div id="tab-audio-video" class="tab-content">
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Volume Boost (Web Audio)</span>
+          <span class="item-desc">Amplify audio up to 200% safely</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="volume-boost-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Bass Boost (+7dB)</span>
+          <span class="item-desc">Punchy low-end sub-bass profile</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="bass-boost-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="row-between" style="margin-top: 8px;">
+        <div class="label-group">
+          <span class="item-title">Vocal Clarity (+6dB)</span>
+          <span class="item-desc">Crisp dialogue and podcast speech peak</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="vocal-boost-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Universal Ambient Glow</span>
+          <span class="item-desc">Dynamic bias lighting behind videos</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="ambient-glow-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Screenshot Format</span>
+          <span class="item-desc">Image format for frame captures</span>
+        </div>
+        <select id="screenshot-format-select">
+          <option value="png">PNG (Lossless)</option>
+          <option value="jpeg">JPEG (Compact)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <button id="reset-filters-btn" class="btn-action">Reset Video Filters (Brightness / Contrast)</button>
+    </div>
+  </div>
+
+  <!-- PLAYER TAB -->
+  <div id="tab-player" class="tab-content">
+    <div class="card">
+      <div class="row-between">
+        <div class="label-group">
+          <span class="item-title">Smart Miniplayer</span>
+          <span class="item-desc">Float video when scrolling away</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="smart-miniplayer-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="item-title">Pro Shortcuts &amp; Controls</div>
+      <div class="item-desc" style="margin-top: 4px; line-height: 1.55;">
+        • <strong>Alt + B</strong>: Show or hide Video Tools panel.<br>
+        • <strong>Toolbar (Below Video)</strong>: Enhancer-style quick bar.<br>
+        • <strong>Speed Popover</strong>: 1-click jump to 1.4×, 2×, etc.<br>
+        • <strong>Space</strong>: Instant play/pause without repeat.<br>
+        • <strong>[ / ]</strong>: Snap speed down/up on 0.25 grid.<br>
+        • <strong>, / .</strong>: Step backward / forward 1 exact frame.<br>
+        • <strong>A / B</strong>: Set A/B loop points on timestamp.<br>
+        • <strong>🎬 Export Clip</strong>: Download loop as high-res WebM.<br>
+        • <strong>Shift + B</strong>: Bookmark current timestamp.<br>
+        • <strong>Shift + A</strong>: Toggle Universal Ambient Glow.<br>
+        • <strong>Shift + S</strong>: Toggle Sleep Timer (15m/30m/end).<br>
+        • <strong>R</strong>: Reset speed to 1.0×.
+      </div>
+    </div>
+  </div>
+
+  <!-- SITE TAB -->
+  <div id="tab-site" class="tab-content">
+    <div class="site-status">
+      <div>Active Site: <strong id="site-name">Loading…</strong></div>
+      <div id="site-info" style="margin-top: 3px;">Speed: default · Seek: default</div>
+    </div>
+    <div class="card">
+      <button id="reset-site-btn" class="btn-action btn-danger" disabled>Reset This Site's Settings</button>
+    </div>
+  </div>
+
+  <footer>
+    <div class="status-live">Live Sync</div>
+    <div>No reload needed</div>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
