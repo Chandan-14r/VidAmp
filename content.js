@@ -1300,6 +1300,16 @@
     }
 
     function getVideo() {
+        if (isYouTubePage()) {
+            const yt = findYouTubeMainVideo();
+            if (yt) {
+                if (video !== yt) {
+                    video = yt;
+                    preferredVideo = yt;
+                }
+                return yt;
+            }
+        }
         if (isUsableVideo(preferredVideo)) return preferredVideo;
         if (isUsableVideo(video)) return video;
         preferredVideo = null;
@@ -1314,6 +1324,42 @@
         } catch (_) {
             showToast('Play blocked');
         }
+    }
+
+    function togglePlayPause(v) {
+        if (!v) v = getVideo();
+        if (!v) return;
+
+        // 1. YouTube specialized player integration
+        if (isYouTubePage()) {
+            const moviePlayer = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+            if (moviePlayer && typeof moviePlayer.getPlayerState === 'function') {
+                try {
+                    const state = moviePlayer.getPlayerState();
+                    // 1 = PLAYING, 3 = BUFFERING
+                    if (state === 1 || state === 3) {
+                        if (typeof moviePlayer.pauseVideo === 'function') {
+                            moviePlayer.pauseVideo();
+                            return;
+                        }
+                    } else {
+                        if (typeof moviePlayer.playVideo === 'function') {
+                            moviePlayer.playVideo();
+                            return;
+                        }
+                    }
+                } catch (_) {}
+            }
+        }
+
+        // 2. Standard HTML5 video element toggle
+        try {
+            if (v.paused) {
+                safePlay(v);
+            } else {
+                v.pause();
+            }
+        } catch (_) {}
     }
 
     function attachVideoListeners(v) {
@@ -2681,9 +2727,7 @@
         };
 
         playBtn.onclick = () => {
-            const v = getVideo();
-            if (!v) return;
-            v.paused ? safePlay(v) : v.pause();
+            togglePlayPause(getVideo());
         };
 
         speedButtons.forEach(button => {
@@ -4817,11 +4861,43 @@
 
     let spaceKeyIntercepted = false;
 
+    function isSpaceKey(e) {
+        return (
+            e.code === 'Space' ||
+            e.key === ' ' ||
+            e.key === 'Spacebar' ||
+            e.keyCode === 32 ||
+            e.which === 32
+        );
+    }
+
+    function isEditableEvent(e) {
+        const target = (e.composedPath && e.composedPath()[0]) || e.target;
+        const active = document.activeElement;
+
+        const isElEditable = (el) => {
+            if (!el) return false;
+            try {
+                if (el.isContentEditable) return true;
+                const tag = el.tagName ? el.tagName.toUpperCase() : '';
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+                if (el.getAttribute && el.getAttribute('role') === 'textbox') return true;
+                if (el.closest && el.closest('input, textarea, select, [contenteditable="true"], [role="textbox"], ytd-searchbox, #search-input, #contenteditable-root')) {
+                    return true;
+                }
+            } catch (_) {}
+            return false;
+        };
+
+        return isElEditable(target) || isElEditable(active);
+    }
+
     window.addEventListener('keyup', e => {
-        if (e.code === 'Space' && spaceKeyIntercepted) {
+        if (isSpaceKey(e) && spaceKeyIntercepted) {
             spaceKeyIntercepted = false;
             try { e.preventDefault(); } catch (_) {}
             try { e.stopPropagation(); } catch (_) {}
+            try { e.stopImmediatePropagation(); } catch (_) {}
         }
     }, { capture: true });
 
@@ -4871,14 +4947,27 @@
 
         if (!prefs.shortcuts) return;
 
-        // Editable-element protection
-        const tag = e.target?.tagName;
-        if (
-            tag === 'INPUT' ||
-            tag === 'TEXTAREA' ||
-            tag === 'SELECT' ||
-            e.target?.isContentEditable
-        ) {
+        // Editable-element protection: never intercept typing in comment or search boxes!
+        if (isEditableEvent(e)) return;
+
+        // Space: Universal Play / Pause (one physical press = one action, no repeats)
+        if (isSpaceKey(e) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            try { e.stopImmediatePropagation(); } catch (_) {}
+
+            if (e.repeat) return;
+            spaceKeyIntercepted = true;
+
+            // Blur any currently focused button so the browser doesn't activate it via Space
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                try { document.activeElement.blur(); } catch (_) {}
+            }
+
+            const v = getVideo();
+            if (v) {
+                togglePlayPause(v);
+            }
             return;
         }
 
@@ -4903,16 +4992,6 @@
 
         const v = getVideo();
         if (!v) return;
-
-        // Space: Play/Pause (one physical press = one action, no repeats)
-        if (e.code === 'Space' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-            if (e.repeat) return;
-            e.preventDefault();
-            e.stopPropagation();
-            spaceKeyIntercepted = true;
-            v.paused ? safePlay(v) : v.pause();
-            return;
-        }
 
         // Shift + Up/Down for Volume
         if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
