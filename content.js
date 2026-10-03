@@ -661,6 +661,115 @@
         }
     }
 
+    /* =========================================================
+       Live Stream Catch-Up & Live-Head Protection
+       ========================================================= */
+
+    let lastLiveCatchupToastTime = 0;
+
+    function isLiveVideo(v) {
+        if (!v) return false;
+
+        // 1. YouTube specialized live stream check
+        if (isYouTubePage()) {
+            const liveBadge = document.querySelector('.ytp-live-badge') || document.querySelector('.ytp-live');
+            if (liveBadge) return true;
+            const moviePlayer = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+            if (moviePlayer) {
+                try {
+                    if (typeof moviePlayer.getVideoData === 'function' && moviePlayer.getVideoData()?.isLive) return true;
+                    if (typeof moviePlayer.getPlayerResponse === 'function' && moviePlayer.getPlayerResponse()?.videoDetails?.isLiveContent) return true;
+                } catch (_) {}
+            }
+        }
+
+        // 2. Generic HTML5 media live stream checks (Hotstar, JioCinema, Twitch, HLS, DASH)
+        if (!Number.isFinite(v.duration) || v.duration === Infinity) return true;
+
+        // Moving seekable DVR window typical of live streams
+        if (v.seekable && v.seekable.length > 0) {
+            try {
+                const start = v.seekable.start(0);
+                const end = v.seekable.end(v.seekable.length - 1);
+                if (start > 10 || (v.duration > 0 && Math.abs(v.duration - end) < 1.0 && end > 60)) {
+                    return true;
+                }
+            } catch (_) {}
+        }
+
+        // Site badges / indicators
+        if (document.querySelector('.live-tag, .live-badge, [class*="live-indicator" i], [class*="badge-live" i], [aria-label*="live" i]')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    function getLiveDelay(v) {
+        if (!v) return null;
+
+        // YouTube live stream delay
+        if (isYouTubePage()) {
+            const liveBadge = document.querySelector('.ytp-live-badge');
+            if (liveBadge && (liveBadge.hasAttribute('disabled') || liveBadge.classList.contains('disabled'))) {
+                return 0; // Exactly at the live edge!
+            }
+            const moviePlayer = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+            if (moviePlayer && typeof moviePlayer.getProgressState === 'function') {
+                try {
+                    const ps = moviePlayer.getProgressState();
+                    if (ps && typeof ps.seekableEnd === 'number' && typeof ps.current === 'number') {
+                        return Math.max(0, ps.seekableEnd - ps.current);
+                    }
+                } catch (_) {}
+            }
+        }
+
+        // HTML5 Media seekable DVR window
+        if (v.seekable && v.seekable.length > 0) {
+            try {
+                const liveEnd = v.seekable.end(v.seekable.length - 1);
+                if (Number.isFinite(liveEnd)) {
+                    return Math.max(0, liveEnd - v.currentTime);
+                }
+            } catch (_) {}
+        }
+
+        // Buffer edge check
+        if (v.buffered && v.buffered.length > 0) {
+            try {
+                const bufEnd = v.buffered.end(v.buffered.length - 1);
+                if (Number.isFinite(bufEnd)) {
+                    return Math.max(0, bufEnd - v.currentTime);
+                }
+            } catch (_) {}
+        }
+
+        if (v.duration === Infinity) return 0;
+
+        return null;
+    }
+
+    function checkLiveStreamCatchUp(v) {
+        if (!v || v.paused) return;
+        if (Number(v.playbackRate) <= 1.0) return; // Only monitor if user is running faster than 1x to catch up
+
+        if (!isLiveVideo(v)) return;
+
+        const delay = getLiveDelay(v);
+        // If within 2.5 seconds of the live head, we have caught up to the live stream
+        if (delay !== null && delay <= 2.5) {
+            const now = performance.now();
+            if (now - lastLiveCatchupToastTime > 3000) {
+                lastLiveCatchupToastTime = now;
+                setPlaybackRate(v, 1.0, false);
+                showToast('🔴 Caught up to Live — Speed returned to 1×');
+                if (toolbarBuilt) syncToolbar();
+                syncControlsToVideo();
+            }
+        }
+    }
+
     function setPointA() {
         const v = getVideo();
         if (!v) return;
@@ -1396,7 +1505,12 @@
         ].forEach(evt => {
             v.addEventListener(evt, () => {
                 syncControlsToVideo();
-                if (evt === 'timeupdate') handleLoopTimeUpdate(v);
+                if (evt === 'timeupdate') {
+                    handleLoopTimeUpdate(v);
+                    checkLiveStreamCatchUp(v);
+                } else if (evt === 'progress') {
+                    checkLiveStreamCatchUp(v);
+                }
             }, { signal });
         });
 
@@ -3877,6 +3991,15 @@
 
     function setPlaybackRate(v, rate, notify = false) {
         if (!v || !validSpeed(rate)) return false;
+
+        // Live stream head protection: cannot speed up beyond 1.0x when already at the live edge!
+        if (rate > 1.0 && isLiveVideo(v)) {
+            const delay = getLiveDelay(v);
+            if (delay !== null && delay <= 2.5) {
+                showToast('⚠️ At Live edge — Speed kept at 1× to prevent buffering');
+                return false;
+            }
+        }
 
         rateGuardToken++; // manual deliberate change cancels pending restore
         rateGuard = null;
