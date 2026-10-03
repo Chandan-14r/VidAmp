@@ -403,6 +403,9 @@
     let cinemaOverlay = null;
     let hideCardsActive = false;
     let hideCardsStyle = null;
+    let toolbarCustomPos = null;
+    let isDraggingToolbar = false;
+    let toolbarDragStart = null;
     const MIN_VIDEO_AREA_PCT = 0.25; // 25% of viewport to show toolbar
 
     // === Audio FX State (Bass Boost & Vocal Clarity) ===
@@ -1759,12 +1762,18 @@
         const host = document.createElement('div');
         host.id = 'mvc-host';
         host.style.cssText = [
-            'position:fixed',
-            'inset:0',
-            'width:100vw',
-            'height:100vh',
-            'z-index:2147483647',
-            'pointer-events:none'
+            'position: fixed !important',
+            'left: 0 !important',
+            'top: 0 !important',
+            'width: 0 !important',
+            'height: 0 !important',
+            'overflow: visible !important',
+            'z-index: 2147483647 !important',
+            'pointer-events: none !important',
+            'margin: 0 !important',
+            'padding: 0 !important',
+            'border: none !important',
+            'background: transparent !important'
         ].join(';');
 
         document.documentElement.appendChild(host);
@@ -3018,6 +3027,7 @@
                 box-sizing: border-box;
                 z-index: 100;
                 clear: both;
+                pointer-events: auto;
             }
             :host(.mvc-floating-mode) {
                 position: fixed !important;
@@ -3025,20 +3035,17 @@
                 pointer-events: none !important;
                 margin: 0 !important;
                 padding: 0 !important;
-                width: auto !important;
-                height: auto !important;
-                left: 0 !important;
-                top: 0 !important;
+                width: max-content !important;
+                height: max-content !important;
                 display: block !important;
-                transform: translate(var(--mvc-tb-x, 0px), var(--mvc-tb-y, 0px)) !important;
-                transition: opacity 0.15s ease, transform 0.08s ease !important;
             }
             :host(.mvc-floating-mode) #mvc-toolbar-container {
                 display: flex !important;
                 align-items: center !important;
                 justify-content: center !important;
                 pointer-events: none !important;
-                width: auto !important;
+                width: max-content !important;
+                height: max-content !important;
                 margin: 0 !important;
                 padding: 0 !important;
             }
@@ -3054,6 +3061,7 @@
                 padding: 0;
                 margin: 0;
                 box-sizing: border-box;
+                pointer-events: none;
             }
             #mvc-toolbar {
                 display: inline-flex;
@@ -3067,11 +3075,16 @@
                 user-select: none;
                 backdrop-filter: blur(20px) saturate(180%);
                 -webkit-backdrop-filter: blur(20px);
-                transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+                transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+                pointer-events: auto !important;
+                cursor: grab;
             }
             #mvc-toolbar:hover {
                 border-color: rgba(255, 255, 255, 0.25);
                 box-shadow: 0 6px 26px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+            }
+            #mvc-toolbar:active {
+                cursor: grabbing;
             }
             .tb-btn {
                 display: inline-flex;
@@ -3266,7 +3279,7 @@
                     inset: 0;
                     background: rgba(0, 0, 0, 0.88);
                     z-index: 2147483640;
-                    pointer-events: auto;
+                    pointer-events: none !important;
                     opacity: 0;
                     display: none;
                     cursor: pointer;
@@ -3275,6 +3288,7 @@
                 #cinema-overlay.visible {
                     display: block;
                     opacity: 1;
+                    pointer-events: auto !important;
                 }
             `;
             shadow.appendChild(cinemaStyle);
@@ -3529,6 +3543,46 @@
             }
         };
 
+        // Make floating toolbar draggable so user can freely position it anywhere on screen
+        tb.addEventListener('pointerdown', e => {
+            if (e.target.closest('button, input, select, .sp-pill, .bm-item, #mvc-speed-popover, #mvc-bookmark-popover')) {
+                return;
+            }
+            if (e.button !== 0) return; // Only primary left-click drag
+
+            isDraggingToolbar = true;
+            const currentLeft = toolbarHost.offsetLeft || 0;
+            const currentTop = toolbarHost.offsetTop || 0;
+            toolbarDragStart = {
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                hostX: currentLeft,
+                hostY: currentTop
+            };
+
+            const onPointerMove = moveEvt => {
+                if (!isDraggingToolbar || !toolbarDragStart) return;
+                const dx = moveEvt.clientX - toolbarDragStart.mouseX;
+                const dy = moveEvt.clientY - toolbarDragStart.mouseY;
+                const newLeft = Math.max(0, Math.min(window.innerWidth - tb.offsetWidth, toolbarDragStart.hostX + dx));
+                const newTop = Math.max(0, Math.min(window.innerHeight - tb.offsetHeight, toolbarDragStart.hostY + dy));
+
+                toolbarCustomPos = { left: newLeft, top: newTop };
+                toolbarHost.style.setProperty('left', `${Math.round(newLeft)}px`, 'important');
+                toolbarHost.style.setProperty('top', `${Math.round(newTop)}px`, 'important');
+            };
+
+            const onPointerUp = () => {
+                isDraggingToolbar = false;
+                toolbarDragStart = null;
+                window.removeEventListener('pointermove', onPointerMove, true);
+                window.removeEventListener('pointerup', onPointerUp, true);
+            };
+
+            window.addEventListener('pointermove', onPointerMove, true);
+            window.addEventListener('pointerup', onPointerUp, true);
+        });
+
         // Close popovers on outer click
         document.addEventListener('click', () => {
             if (speedPopover) speedPopover.classList.remove('visible');
@@ -3642,13 +3696,12 @@
     // Mount toolbar directly above video description (YouTube) or float directly below video player (Hotstar, generic sites)
     function mountToolbarInPage() {
         if (!toolbarBuilt || !toolbarHost) return;
+        if (isDraggingToolbar) return;
         const v = getVideo();
 
         const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
         if (!v || !isLargeVideo(v) || isFullscreen) {
-            if (toolbarHost.style.display !== 'none') {
-                toolbarHost.style.display = 'none';
-            }
+            toolbarHost.style.setProperty('display', 'none', 'important');
             return;
         }
 
@@ -3661,15 +3714,18 @@
 
             if (targetEl && targetEl.parentNode) {
                 toolbarHost.classList.remove('mvc-floating-mode');
-                toolbarHost.style.removeProperty('--mvc-tb-x');
-                toolbarHost.style.removeProperty('--mvc-tb-y');
-                toolbarHost.style.position = '';
-                toolbarHost.style.zIndex = '';
-                toolbarHost.style.pointerEvents = '';
-
-                if (toolbarHost.style.display !== 'block') {
-                    toolbarHost.style.display = 'block';
-                }
+                toolbarHost.style.cssText = [
+                    'position: relative !important',
+                    'display: block !important',
+                    'width: 100% !important',
+                    'height: auto !important',
+                    'margin: 6px 0 10px 0 !important',
+                    'padding: 0 !important',
+                    'border: none !important',
+                    'background: transparent !important',
+                    'z-index: 100 !important',
+                    'pointer-events: auto !important'
+                ].join(';');
 
                 if (!toolbarHost.isConnected || toolbarHost.parentNode !== targetEl.parentNode) {
                     try {
@@ -3683,7 +3739,7 @@
 
         // 2. Generic Video Sites (Hotstar, JioCinema, Netflix, Prime Video, Vimeo, etc.)
         // NEVER inject into the site's internal component tree or flex containers!
-        // Instead, mount to document.body and float cleanly directly BELOW the video player!
+        // Instead, mount to document.body and float cleanly directly BELOW the video player or ABOVE native player controls!
         const body = document.body || document.documentElement;
         if (!body) return;
 
@@ -3697,7 +3753,7 @@
         const rect = v.getBoundingClientRect();
         // If video is scrolled off-screen or invisible, hide
         if (rect.bottom < 40 || rect.top > window.innerHeight - 40 || rect.width <= 0 || rect.height <= 0) {
-            toolbarHost.style.display = 'none';
+            toolbarHost.style.setProperty('display', 'none', 'important');
             return;
         }
 
@@ -3709,25 +3765,40 @@
         let left = rect.left + (rect.width - tbWidth) / 2;
         left = Math.max(12, Math.min(window.innerWidth - tbWidth - 12, left));
 
-        // Position vertically: prefer directly below the video player
-        const spaceBelow = window.innerHeight - rect.bottom;
+        // Position vertically:
         let top;
-        if (spaceBelow >= tbHeight + 10) {
-            // Room below video: place directly underneath
-            top = rect.bottom + 8;
+        if (toolbarCustomPos && typeof toolbarCustomPos.top === 'number') {
+            top = Math.max(8, Math.min(window.innerHeight - tbHeight - 8, toolbarCustomPos.top));
+            left = Math.max(8, Math.min(window.innerWidth - tbWidth - 8, toolbarCustomPos.left));
         } else {
-            // Video extends to bottom of viewport (theater / expanded view):
-            // Place inside bottom-center of video player
-            top = rect.bottom - tbHeight - 16;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            if (spaceBelow >= tbHeight + 10) {
+                // Room below video: place directly underneath in regular page flow space
+                top = rect.bottom + 8;
+            } else {
+                // Fullscreen / theater / edge-to-edge video (Hotstar, JioCinema, Netflix, Prime Video, etc.)
+                // CRITICAL: Sit 75px ABOVE the bottom so Hotstar's native controls (timeline, play, volume, fullscreen)
+                // remain 100% visible, fully clickable, and completely unobstructed!
+                top = Math.max(rect.top + 16, rect.bottom - tbHeight - 75);
+            }
+            top = Math.max(8, Math.min(window.innerHeight - tbHeight - 8, top));
         }
-        top = Math.max(10, Math.min(window.innerHeight - tbHeight - 10, top));
 
-        toolbarHost.style.setProperty('--mvc-tb-x', Math.round(left) + 'px');
-        toolbarHost.style.setProperty('--mvc-tb-y', Math.round(top) + 'px');
-
-        if (toolbarHost.style.display !== 'block') {
-            toolbarHost.style.display = 'block';
-        }
+        toolbarHost.style.cssText = [
+            'position: fixed !important',
+            `left: ${Math.round(left)}px !important`,
+            `top: ${Math.round(top)}px !important`,
+            'width: max-content !important',
+            'height: max-content !important',
+            'z-index: 2147483645 !important',
+            'pointer-events: none !important',
+            'margin: 0 !important',
+            'padding: 0 !important',
+            'border: none !important',
+            'background: transparent !important',
+            'display: block !important',
+            'transform: none !important'
+        ].join(';');
 
         syncToolbar();
     }
@@ -4299,9 +4370,26 @@
         const path = e.composedPath ? e.composedPath() : [e.target];
         return path.some(node => {
             try {
-                if (shadow && shadow.contains(node)) return true;
-                if (tbShadow && tbShadow.contains(node)) return true;
-                if (toolbarHost && toolbarHost.contains(node)) return true;
+                if (node instanceof HTMLElement) {
+                    if (node.id === 'mvc-toolbar-host' || node.id === 'mvc-host' || node.id === 'mvc-toolbar-container') {
+                        return false;
+                    }
+                }
+                if (shadow && shadow.contains(node)) {
+                    if (panel && panel.contains(node)) return true;
+                    if (cheatSheet && cheatSheet.contains(node)) return true;
+                    if (cinemaOverlay && cinemaOverlay.contains(node) && cinemaModeActive) return true;
+                    return false;
+                }
+                if (tbShadow && tbShadow.contains(node)) {
+                    const tb = tbShadow.querySelector('#mvc-toolbar');
+                    const sp = tbShadow.querySelector('#mvc-speed-popover');
+                    const bp = tbShadow.querySelector('#mvc-bookmark-popover');
+                    if (tb && tb.contains(node)) return true;
+                    if (sp && sp.contains(node)) return true;
+                    if (bp && bp.contains(node)) return true;
+                    return false;
+                }
                 return false;
             } catch (_) { return false; }
         });
@@ -4624,7 +4712,7 @@
                 node.classList?.contains('ytp-chrome-bottom') ||
                 node.classList?.contains('control-bar') ||
                 node.classList?.contains('player-controls') ||
-                node.closest?.('.vjs-control-bar, .art-controls, [class*="control"], [class*="menu"], [class*="subtitle"], [class*="toolbar"]')
+                node.closest?.('.vjs-control-bar, .art-controls, [class*="control" i], [class*="menu" i], [class*="subtitle" i], [class*="toolbar" i], [class*="progress" i], [class*="scrub" i], [class*="slider" i], [data-testid*="player" i], [data-testid*="control" i], [data-testid*="button" i], [data-testid*="fullscreen" i]')
             )
         );
     }
