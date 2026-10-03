@@ -384,8 +384,6 @@
     let trackpadGestureLatestDelta = 0;
     let trackpadGestureIdleTimer = null;
     let accumulatedWheelDelta = 0;
-    let lastWheelTime = 0;
-    let wheelSpeedStreak = 0;
     let wheelIdleTimer = null;
 
     let fullscreenFallback = null;
@@ -450,6 +448,7 @@
     let trackpadPinchTimer = null;
     let lastTrackpadGestureTime = 0;
     let trackpadGestureStreak = 0;
+    let rateAssertTimer = null;
 
     /* =========================================================
        Audio Controller (Lazy Web Audio API Volume Boost & EQ)
@@ -3929,14 +3928,15 @@
 
         if (notify) showToast(formatSpeed(rate));
 
-        setTimeout(() => {
-            if (!v.isConnected) return;
+        clearTimeout(rateAssertTimer);
+        rateAssertTimer = setTimeout(() => {
+            if (!v || !v.isConnected) return;
             if (rateGuard || holdBoostEngaged) return; // Never overwrite while in a temporary hold
-            if (Math.abs(Number(v.playbackRate) - rate) > 0.01) {
+            if (Math.abs(Number(v.playbackRate) - prefs.speed) > 0.01) {
                 // Re-assert intended playback rate against aggressive site drift
                 try {
                     isInternalRateChange = true;
-                    v.playbackRate = rate;
+                    v.playbackRate = prefs.speed;
                     setTimeout(() => { isInternalRateChange = false; }, 80);
                 } catch (_) {}
             }
@@ -4859,7 +4859,7 @@
         if (eventIsInsideController(e) || isOverPlayerControl(e)) return;
         if (e.pointerType === 'mouse' && e.button !== 0) return;
 
-        const target = findVideoAtPoint(e.clientX, e.clientY) || (isYouTubePage() ? findYouTubeMainVideo() : null);
+        const target = findVideoAtPoint(e.clientX, e.clientY);
         if (!target) return;
 
         rateGuard = {
@@ -5018,62 +5018,59 @@
 
         // 1. Two-Finger Touchpad & Mouse Wheel Playback Speed Gesture (Enhancer for YouTube style)
         // Over the video player, scrolling with two fingers on laptop touchpad or mouse wheel
-        // smoothly, freely, and fastly controls playback speed with exponential velocity acceleration!
+        // smoothly and predictably controls playback speed!
         if (!e.altKey && !e.shiftKey) {
             if (!prefs.trackpadSpeedEnabled) return;
 
-            const target = findVideoAtPoint(e.clientX, e.clientY) || (isYouTubePage() ? findYouTubeMainVideo() : null);
-            if (!target) return;
-            if (isOverPlayerControl(e)) return;
+            // CRITICAL: ONLY target when the mouse cursor is DIRECTLY inside the video player bounding rect!
+            // When mouse is anywhere on the page (comments, title, recommendations, blank space),
+            // NEVER hijack scrolling - let the browser scroll the page upward/downward naturally!
+            const target = findVideoAtPoint(e.clientX, e.clientY);
+            if (!target || isOverPlayerControl(e)) return;
 
+            // Only prevent page scroll when mouse is actually on top of the active video player
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
             try { e.stopPropagation(); } catch (_) {}
 
+            // Normalize delta across browsers and devices
+            let delta = e.deltaY;
+            if (e.deltaMode === 1) delta *= 33;      // Line mode
+            else if (e.deltaMode === 2) delta *= 100; // Page mode
+
             const dir = prefs.gestureReverse ? -1 : 1;
-            accumulatedWheelDelta += (-e.deltaY * dir);
-
-            const now = performance.now();
-            const dt = now - lastWheelTime;
-            lastWheelTime = now;
-
-            // Track continuous velocity streak for exponential acceleration
-            if (dt < 140) {
-                wheelSpeedStreak = Math.min(12, wheelSpeedStreak + 1);
-            } else {
-                wheelSpeedStreak = 1;
-            }
+            accumulatedWheelDelta += (-delta * dir);
 
             clearTimeout(wheelIdleTimer);
             wheelIdleTimer = setTimeout(() => {
                 accumulatedWheelDelta = 0;
-                wheelSpeedStreak = 0;
-            }, 220);
+            }, 180);
 
-            // Responsive 14px threshold: instantaneous response to two-finger swipes
-            const WHEEL_THRESHOLD = 14;
-            if (Math.abs(accumulatedWheelDelta) >= WHEEL_THRESHOLD) {
-                while (Math.abs(accumulatedWheelDelta) >= WHEEL_THRESHOLD) {
-                    const stepUp = accumulatedWheelDelta > 0;
-                    accumulatedWheelDelta += (stepUp ? -WHEEL_THRESHOLD : WHEEL_THRESHOLD);
+            // Responsive 55px threshold: calibrated for touchpad two-finger swipes and mouse wheel notches
+            const WHEEL_STEP_THRESHOLD = 55;
+            if (Math.abs(accumulatedWheelDelta) >= WHEEL_STEP_THRESHOLD) {
+                const stepUp = accumulatedWheelDelta > 0;
+                // Consume threshold and dampen remainder to prevent runaway inertia
+                accumulatedWheelDelta = stepUp
+                    ? Math.max(0, accumulatedWheelDelta - WHEEL_STEP_THRESHOLD) * 0.4
+                    : Math.min(0, accumulatedWheelDelta + WHEEL_STEP_THRESHOLD) * 0.4;
 
-                    const curRate = Number(target.playbackRate) || 1;
+                const curRate = Number(target.playbackRate) || 1;
 
-                    // Dynamic step calculation:
-                    // Gentle nudge: 0.05x (Enhancer precision standard)
-                    // Fast swipe (streak >= 3): 0.10x, 0.15x, 0.20x exponential scaling
-                    let baseStep = 0.05;
-                    if (curRate >= 3.0) baseStep = 0.20;
-                    else if (curRate >= 2.0) baseStep = 0.10;
+                // Step sizes:
+                // Normal viewing range (0.25x - 2.0x): 0.05x precision steps (Enhancer for YouTube standard)
+                // Fast range (2.0x - 4.0x): 0.10x steps
+                // Extreme range (> 4.0x): 0.25x steps
+                let stepAmount = 0.05;
+                if (curRate >= 4.0) stepAmount = 0.25;
+                else if (curRate >= 2.0) stepAmount = 0.10;
 
-                    const streakMultiplier = 1 + Math.max(0, (wheelSpeedStreak - 2) * 0.6);
-                    const stepAmount = Math.max(0.05, Math.round((baseStep * streakMultiplier) * 20) / 20);
+                let nextRate = stepUp ? curRate + stepAmount : curRate - stepAmount;
+                nextRate = Math.round(nextRate * 20) / 20; // Clean 0.05x increments (e.g. 1.05, 1.10, 1.25, 1.40)
+                nextRate = Number(Math.min(MAX_SPEED, Math.max(MIN_SPEED, nextRate)).toFixed(2));
 
-                    let nextRate = stepUp ? curRate + stepAmount : curRate - stepAmount;
-                    nextRate = Math.round(nextRate * 20) / 20; // clean 0.05 increments (1.05, 1.10, 1.35, 1.40, etc.)
-                    nextRate = Number(Math.min(MAX_SPEED, Math.max(MIN_SPEED, nextRate)).toFixed(2));
-
+                if (nextRate !== curRate) {
                     setPlaybackRate(target, nextRate, true);
                     if (toolbarBuilt) syncToolbar();
                 }
