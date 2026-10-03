@@ -3070,7 +3070,7 @@
                 display: block;
                 all: initial;
                 width: 100%;
-                margin: 6px 0 10px 0;
+                margin: 8px 0 16px 0;
                 box-sizing: border-box;
                 z-index: 100;
                 clear: both;
@@ -3113,22 +3113,24 @@
             #mvc-toolbar {
                 display: inline-flex;
                 align-items: center;
-                gap: 4px;
-                padding: 4px 12px;
-                background: rgba(28, 29, 35, 0.95);
-                border: 1px solid rgba(255, 255, 255, 0.14);
-                border-radius: 24px;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+                gap: 2px;
+                height: 32px;
+                box-sizing: border-box;
+                padding: 2px 6px;
+                background: rgba(18, 19, 24, 0.94);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
                 user-select: none;
-                backdrop-filter: blur(20px) saturate(180%);
-                -webkit-backdrop-filter: blur(20px);
+                backdrop-filter: blur(16px);
+                -webkit-backdrop-filter: blur(16px);
                 transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
                 pointer-events: auto !important;
                 cursor: grab;
             }
             #mvc-toolbar:hover {
-                border-color: rgba(255, 255, 255, 0.25);
-                box-shadow: 0 6px 26px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+                border-color: rgba(255, 255, 255, 0.22);
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
             }
             #mvc-toolbar:active {
                 cursor: grabbing;
@@ -3137,108 +3139,103 @@
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                width: 34px;
-                height: 34px;
+                width: 28px;
+                height: 28px;
                 border: none;
-                border-radius: 50%;
+                border-radius: 6px;
                 background: transparent;
-                color: #e2e8f0;
+                color: #cbd5e1;
                 cursor: pointer;
                 padding: 0;
                 position: relative;
-                transition: all 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+                transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
+                flex-shrink: 0;
             }
             .tb-btn:hover {
-                background: rgba(255, 255, 255, 0.15);
+                background: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
-                transform: translateY(-1.5px) scale(1.06);
             }
             .tb-btn:active {
                 transform: scale(0.92);
             }
             .tb-btn.active {
                 color: #38bdf8;
-                background: rgba(56, 189, 248, 0.18);
-                box-shadow: 0 0 14px rgba(56, 189, 248, 0.4);
+                background: rgba(56, 189, 248, 0.16);
             }
             .tb-btn.active-glow {
                 color: #fbbf24 !important;
-                background: rgba(251, 191, 36, 0.2) !important;
-                box-shadow: 0 0 14px rgba(251, 191, 36, 0.5) !important;
+                background: rgba(251, 191, 36, 0.18) !important;
             }
             .tb-btn.active-violet {
                 color: #c084fc !important;
-                background: rgba(192, 132, 252, 0.2) !important;
-                box-shadow: 0 0 14px rgba(192, 132, 252, 0.5) !important;
+                background: rgba(192, 132, 252, 0.18) !important;
             }
             .tb-btn.active-indigo {
                 color: #818cf8 !important;
-                background: rgba(129, 140, 248, 0.2) !important;
-                box-shadow: 0 0 14px rgba(129, 140, 248, 0.5) !important;
+                background: rgba(129, 140, 248, 0.18) !important;
             }
             .tb-btn.recording {
                 color: #ef4444 !important;
-                background: rgba(239, 68, 68, 0.22) !important;
-                box-shadow: 0 0 16px rgba(239, 68, 68, 0.6) !important;
+                background: rgba(239, 68, 68, 0.2) !important;
                 animation: mvc-pulse 1s infinite alternate;
             }
             @keyframes mvc-pulse {
                 from { transform: scale(1); opacity: 1; }
-                to { transform: scale(1.1); opacity: 0.8; }
+                to { transform: scale(1.08); opacity: 0.85; }
             }
             .tb-btn svg {
-                width: 19px;
-                height: 19px;
+                width: 16px;
+                height: 16px;
                 fill: none;
                 stroke: currentColor;
                 stroke-width: 1.85;
                 stroke-linecap: round;
                 stroke-linejoin: round;
-                filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
             }
             .tb-sep {
                 width: 1px;
-                height: 18px;
-                background: rgba(255, 255, 255, 0.15);
-                margin: 0 3px;
+                height: 16px;
+                background: rgba(255, 255, 255, 0.12);
+                margin: 0 2px;
+                flex-shrink: 0;
             }
             .tb-speed-btn {
                 display: inline-flex;
                 align-items: center;
-                gap: 5px;
-                height: 30px;
-                padding: 0 10px;
+                gap: 4px;
+                height: 24px;
+                padding: 0 7px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 12px;
+                font-size: 11px;
                 font-weight: 700;
                 color: #ffffff;
                 cursor: pointer;
-                border-radius: 15px;
+                border-radius: 6px;
                 background: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.16);
-                transition: all 0.14s ease;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                transition: background 0.12s ease, border-color 0.12s ease;
+                flex-shrink: 0;
             }
             .tb-speed-btn:hover {
                 background: rgba(255, 255, 255, 0.18);
-                border-color: rgba(255, 255, 255, 0.28);
-                transform: translateY(-1.5px);
+                border-color: rgba(255, 255, 255, 0.25);
             }
             .tb-speed-btn svg {
-                width: 16px;
-                height: 16px;
+                width: 13px;
+                height: 13px;
             }
             #mvc-speed-popover, #mvc-bookmark-popover {
                 position: absolute;
-                bottom: calc(100% + 10px);
+                bottom: calc(100% + 8px);
                 left: 50%;
                 transform: translateX(-50%) translateY(4px) scale(0.96);
                 display: none;
                 opacity: 0;
                 background: rgba(20, 21, 26, 0.96);
-                border: 1px solid rgba(255, 255, 255, 0.16);
-                border-radius: 18px;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 10px;
                 padding: 6px 8px;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
                 backdrop-filter: blur(20px);
                 -webkit-backdrop-filter: blur(20px);
                 z-index: 2147483645;
@@ -3262,8 +3259,8 @@
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 font-size: 11px;
                 font-weight: 700;
-                padding: 4px 8px;
-                border-radius: 12px;
+                padding: 3px 7px;
+                border-radius: 6px;
                 cursor: pointer;
                 transition: all 0.12s ease;
                 white-space: nowrap;
@@ -3271,7 +3268,6 @@
             .sp-pill:hover {
                 background: rgba(255, 255, 255, 0.22);
                 color: #ffffff;
-                transform: translateY(-1px);
             }
             .sp-pill.active {
                 background: #38bdf8;
@@ -3752,31 +3748,30 @@
             return;
         }
 
-        // 1. YouTube Watch Page: Place directly below player and directly ABOVE the video title in page flow
+        // 1. YouTube Watch Page: Place cleanly in page block flow BEFORE ytd-watch-metadata (below player/Enhancer and above title)
         if (isYouTubePage()) {
-            const targetEl = document.querySelector('ytd-watch-metadata #title') ||
-                             document.querySelector('#above-the-fold #title') ||
-                             document.querySelector('h1.style-scope.ytd-watch-metadata') ||
-                             document.querySelector('ytd-watch-metadata');
+            const watchMetadata = document.querySelector('ytd-watch-metadata') ||
+                                  document.querySelector('#below');
 
-            if (targetEl && targetEl.parentNode) {
+            if (watchMetadata && watchMetadata.parentNode) {
                 toolbarHost.classList.remove('mvc-floating-mode');
                 toolbarHost.style.cssText = [
                     'position: relative !important',
                     'display: block !important',
                     'width: 100% !important',
                     'height: auto !important',
-                    'margin: 6px 0 10px 0 !important',
+                    'margin: 8px 0 16px 0 !important',
                     'padding: 0 !important',
                     'border: none !important',
                     'background: transparent !important',
                     'z-index: 100 !important',
-                    'pointer-events: auto !important'
+                    'pointer-events: auto !important',
+                    'clear: both !important'
                 ].join(';');
 
-                if (!toolbarHost.isConnected || toolbarHost.parentNode !== targetEl.parentNode) {
+                if (!toolbarHost.isConnected || toolbarHost.nextSibling !== watchMetadata) {
                     try {
-                        targetEl.parentNode.insertBefore(toolbarHost, targetEl);
+                        watchMetadata.parentNode.insertBefore(toolbarHost, watchMetadata);
                     } catch (_) {}
                 }
                 syncToolbar();
@@ -3806,7 +3801,7 @@
 
         const tb = tbShadow.querySelector('#mvc-toolbar');
         const tbWidth = (tb && tb.offsetWidth > 0) ? tb.offsetWidth : 440;
-        const tbHeight = (tb && tb.offsetHeight > 0) ? tb.offsetHeight : 42;
+        const tbHeight = (tb && tb.offsetHeight > 0) ? tb.offsetHeight : 32;
 
         // Center horizontally with the video
         let left = rect.left + (rect.width - tbWidth) / 2;
@@ -3863,14 +3858,20 @@
     if (isYouTubePage()) {
         let ytMountScheduled = false;
         const ytToolbarObserver = new MutationObserver(() => {
-            // ONLY trigger if toolbar is disconnected from DOM
-            if (!toolbarBuilt || !toolbarHost || toolbarHost.isConnected || Boolean(document.fullscreenElement)) return;
-            if (ytMountScheduled) return;
-            ytMountScheduled = true;
-            requestAnimationFrame(() => {
-                ytMountScheduled = false;
-                if (!toolbarHost.isConnected) mountToolbarInPage();
-            });
+            if (!toolbarBuilt || !toolbarHost || Boolean(document.fullscreenElement)) return;
+            const watchMetadata = document.querySelector('ytd-watch-metadata') || document.querySelector('#below');
+            const needsMount = watchMetadata
+                ? (!toolbarHost.isConnected || toolbarHost.nextSibling !== watchMetadata)
+                : !toolbarHost.isConnected;
+
+            if (needsMount) {
+                if (ytMountScheduled) return;
+                ytMountScheduled = true;
+                requestAnimationFrame(() => {
+                    ytMountScheduled = false;
+                    mountToolbarInPage();
+                });
+            }
         });
         try {
             ytToolbarObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
@@ -5632,10 +5633,17 @@
         requestAnimationFrame(() => {
             refreshVideos({ resetIndex: true });
             checkAutoTheater();
+            if (toolbarBuilt) mountToolbarInPage();
         });
 
-        setTimeout(() => refreshVideos({ resetIndex: true }), 250);
-        setTimeout(() => refreshVideos({ resetIndex: true }), 900);
+        setTimeout(() => {
+            refreshVideos({ resetIndex: true });
+            if (toolbarBuilt) mountToolbarInPage();
+        }, 250);
+        setTimeout(() => {
+            refreshVideos({ resetIndex: true });
+            if (toolbarBuilt) mountToolbarInPage();
+        }, 900);
     }
 
     if (isYouTubePage()) {
