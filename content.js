@@ -448,7 +448,6 @@
     let trackpadPinchTimer = null;
     let lastTrackpadGestureTime = 0;
     let trackpadGestureStreak = 0;
-    let rateAssertTimer = null;
 
     /* =========================================================
        Audio Controller (Lazy Web Audio API Volume Boost & EQ)
@@ -1337,12 +1336,18 @@
 
         // 1. YouTube specialized player integration
         if (isYouTubePage()) {
+            const playBtn = document.querySelector('.ytp-play-button');
+            if (playBtn) {
+                playBtn.click();
+                return;
+            }
+
             const moviePlayer = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
             if (moviePlayer && typeof moviePlayer.getPlayerState === 'function') {
                 try {
                     const state = moviePlayer.getPlayerState();
-                    // 1 = PLAYING, 3 = BUFFERING
-                    if (state === 1 || state === 3) {
+                    // 1 = PLAYING
+                    if (state === 1) {
                         if (typeof moviePlayer.pauseVideo === 'function') {
                             moviePlayer.pauseVideo();
                             return;
@@ -1417,29 +1422,26 @@
                 return;
             }
 
-            // 1. Temporary 2x boost detection (YouTube hold-to-2x, Spacebar hold, touch hold)
-            if (Math.abs(n - 2.0) < 0.01) {
-                // If user's deliberate speed was not already 2.0x, record it so we can restore later
+            // 1. Temporary 2x boost detection (YouTube hold-to-2x, Spacebar hold)
+            if (Math.abs(n - 2.0) < 0.01 && (rateGuard || spaceKeyIntercepted)) {
                 if (Math.abs(persistentUserSpeed - 2.0) >= 0.01) {
                     temporaryBoostActive = true;
                     temporaryBoostOriginalSpeed = persistentUserSpeed;
-                    dbg('[MVC][boost] Temporary 2x boost detected! Will restore to', temporaryBoostOriginalSpeed);
                     if (toolbarBuilt) syncToolbar();
                     return;
                 }
             }
 
-            // 2. Temporary 2x boost released: the site (YouTube) just reset rate back to 1.0!
-            if (temporaryBoostActive) {
+            // 2. Temporary 2x boost released: the site (YouTube) reset rate back to 1.0
+            if (temporaryBoostActive && Math.abs(n - 1.0) < 0.01) {
                 temporaryBoostActive = false;
                 const restoreRate = temporaryBoostOriginalSpeed || persistentUserSpeed || 1.0;
                 temporaryBoostOriginalSpeed = null;
 
-                dbg('[MVC][boost] Boost released! Restoring to', restoreRate, 'from site reset', n);
                 try {
                     isInternalRateChange = true;
                     v.playbackRate = restoreRate;
-                    setTimeout(() => { isInternalRateChange = false; }, 100);
+                    setTimeout(() => { isInternalRateChange = false; }, 80);
                 } catch (_) {}
 
                 prefs.speed = restoreRate;
@@ -1448,45 +1450,16 @@
                 syncControlsToVideo();
                 if (toolbarBuilt) syncToolbar();
                 showToast(formatSpeed(restoreRate));
-
-                // Guard against YouTube's secondary asynchronous reset
-                clearTimeout(temporaryBoostRestoreTimer);
-                temporaryBoostRestoreTimer = setTimeout(() => {
-                    if (v.isConnected && Math.abs(Number(v.playbackRate) - restoreRate) > 0.01) {
-                        try {
-                            isInternalRateChange = true;
-                            v.playbackRate = restoreRate;
-                            setTimeout(() => { isInternalRateChange = false; }, 80);
-                        } catch (_) {}
-                    }
-                }, 160);
                 return;
             }
 
-            // 3. Rate Guard integration for mouse pointer holds
-            if (rateGuard && rateGuard.phase === 'released') {
-                setTimeout(() => enforceRateGuard('ratechange'), 0);
-            }
-
-            // 4. Normal external rate changes (e.g. from site's native gear menu or DASH drift)
-            const standardSpeeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.4, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0];
-            const isStandard = standardSpeeds.some(s => Math.abs(s - n) < 0.01);
-            if (isStandard) {
-                prefs.speed = n;
-                persistentUserSpeed = n;
-                saveValue(siteKey('speed'), n);
-                if (toolbarBuilt) syncToolbar();
-                syncControlsToVideo();
-            } else {
-                // Buffer drift: re-assert user's intended playback speed
-                if (validSpeed(persistentUserSpeed) && Math.abs(n - persistentUserSpeed) > 0.01) {
-                    try {
-                        isInternalRateChange = true;
-                        v.playbackRate = persistentUserSpeed;
-                        setTimeout(() => { isInternalRateChange = false; }, 80);
-                    } catch (_) {}
-                }
-            }
+            // 3. Normal rate change (from user interaction or site menu)
+            // Respect any valid speed cleanly with no feedback loops or resets
+            prefs.speed = n;
+            persistentUserSpeed = n;
+            saveValue(siteKey('speed'), n);
+            if (toolbarBuilt) syncToolbar();
+            syncControlsToVideo();
         }, { signal });
 
         v.addEventListener('enterpictureinpicture', () => {
@@ -3927,20 +3900,6 @@
         syncExtraSpeedSelect();
 
         if (notify) showToast(formatSpeed(rate));
-
-        clearTimeout(rateAssertTimer);
-        rateAssertTimer = setTimeout(() => {
-            if (!v || !v.isConnected) return;
-            if (rateGuard || holdBoostEngaged) return; // Never overwrite while in a temporary hold
-            if (Math.abs(Number(v.playbackRate) - prefs.speed) > 0.01) {
-                // Re-assert intended playback rate against aggressive site drift
-                try {
-                    isInternalRateChange = true;
-                    v.playbackRate = prefs.speed;
-                    setTimeout(() => { isInternalRateChange = false; }, 80);
-                } catch (_) {}
-            }
-        }, 180);
 
         syncControlsToVideo();
         if (toolbarBuilt) syncToolbar();
