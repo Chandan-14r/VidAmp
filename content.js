@@ -375,9 +375,19 @@
     let rateGuard = null;
     let rateGuardToken = 0;
 
+    // Persistent speed & temporary 2x boost tracking
+    let persistentUserSpeed = 1.0;
+    let temporaryBoostActive = false;
+    let temporaryBoostOriginalSpeed = null;
+    let temporaryBoostRestoreTimer = null;
+
     let trackpadGestureVideo = null;
     let trackpadGestureLatestDelta = 0;
     let trackpadGestureIdleTimer = null;
+    let accumulatedWheelDelta = 0;
+    let lastWheelTime = 0;
+    let wheelSpeedStreak = 0;
+    let wheelIdleTimer = null;
 
     let fullscreenFallback = null;
     let hostOriginalParent = null;
@@ -1410,48 +1420,85 @@
 
         v.addEventListener('ratechange', () => {
             const n = Number(v.playbackRate);
+            if (!validSpeed(n)) return;
 
-            if (rateGuard && Math.abs(n - 2.0) < 0.01) {
-                rateGuard.sawBoost = true;
+            if (isInternalRateChange) {
+                prefs.speed = n;
+                persistentUserSpeed = n;
+                saveValue(siteKey('speed'), n);
+                if (toolbarBuilt) syncToolbar();
+                syncControlsToVideo();
+                return;
             }
 
-            const isGuarded = (rateGuard && (rateGuard.phase === 'pressed' || rateGuard.phase === 'released')) || holdBoostEngaged;
-            if (!isGuarded) {
-                if (validSpeed(n)) {
-                    if (isInternalRateChange) {
-                        prefs.speed = n;
-                        saveValue(siteKey('speed'), n);
-                        if (toolbarBuilt) syncToolbar();
-                        syncControlsToVideo();
-                    } else {
-                        // Rate change originated externally (site script, player gear menu, DASH drift)
-                        const standardSpeeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.4, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0];
-                        const isStandard = standardSpeeds.some(s => Math.abs(s - n) < 0.01);
-                        if (isStandard) {
-                            prefs.speed = n;
-                            saveValue(siteKey('speed'), n);
-                            if (toolbarBuilt) syncToolbar();
-                            syncControlsToVideo();
-                        } else {
-                            // Site drift / DASH buffer adjustment (e.g. 1.24x, 1.03x, 0.98x)
-                            // Lock and re-assert the user's intended playback speed!
-                            if (validSpeed(prefs.speed) && Math.abs(n - prefs.speed) > 0.01) {
-                                try {
-                                    isInternalRateChange = true;
-                                    v.playbackRate = prefs.speed;
-                                    setTimeout(() => { isInternalRateChange = false; }, 80);
-                                } catch (_) {}
-                            }
-                        }
-                    }
+            // 1. Temporary 2x boost detection (YouTube hold-to-2x, Spacebar hold, touch hold)
+            if (Math.abs(n - 2.0) < 0.01) {
+                // If user's deliberate speed was not already 2.0x, record it so we can restore later
+                if (Math.abs(persistentUserSpeed - 2.0) >= 0.01) {
+                    temporaryBoostActive = true;
+                    temporaryBoostOriginalSpeed = persistentUserSpeed;
+                    dbg('[MVC][boost] Temporary 2x boost detected! Will restore to', temporaryBoostOriginalSpeed);
+                    if (toolbarBuilt) syncToolbar();
+                    return;
                 }
             }
 
-            if (rateGuard) {
-                dbg('[MVC][guard] ratechange ->', n, 'phase:', rateGuard.phase,
-                    't=' + Math.round(performance.now() - rateGuard.downAt) + 'ms');
-                if (rateGuard.phase === 'released') {
-                    setTimeout(() => enforceRateGuard('ratechange'), 0);
+            // 2. Temporary 2x boost released: the site (YouTube) just reset rate back to 1.0!
+            if (temporaryBoostActive) {
+                temporaryBoostActive = false;
+                const restoreRate = temporaryBoostOriginalSpeed || persistentUserSpeed || 1.0;
+                temporaryBoostOriginalSpeed = null;
+
+                dbg('[MVC][boost] Boost released! Restoring to', restoreRate, 'from site reset', n);
+                try {
+                    isInternalRateChange = true;
+                    v.playbackRate = restoreRate;
+                    setTimeout(() => { isInternalRateChange = false; }, 100);
+                } catch (_) {}
+
+                prefs.speed = restoreRate;
+                persistentUserSpeed = restoreRate;
+                saveValue(siteKey('speed'), restoreRate);
+                syncControlsToVideo();
+                if (toolbarBuilt) syncToolbar();
+                showToast(formatSpeed(restoreRate));
+
+                // Guard against YouTube's secondary asynchronous reset
+                clearTimeout(temporaryBoostRestoreTimer);
+                temporaryBoostRestoreTimer = setTimeout(() => {
+                    if (v.isConnected && Math.abs(Number(v.playbackRate) - restoreRate) > 0.01) {
+                        try {
+                            isInternalRateChange = true;
+                            v.playbackRate = restoreRate;
+                            setTimeout(() => { isInternalRateChange = false; }, 80);
+                        } catch (_) {}
+                    }
+                }, 160);
+                return;
+            }
+
+            // 3. Rate Guard integration for mouse pointer holds
+            if (rateGuard && rateGuard.phase === 'released') {
+                setTimeout(() => enforceRateGuard('ratechange'), 0);
+            }
+
+            // 4. Normal external rate changes (e.g. from site's native gear menu or DASH drift)
+            const standardSpeeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.4, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0];
+            const isStandard = standardSpeeds.some(s => Math.abs(s - n) < 0.01);
+            if (isStandard) {
+                prefs.speed = n;
+                persistentUserSpeed = n;
+                saveValue(siteKey('speed'), n);
+                if (toolbarBuilt) syncToolbar();
+                syncControlsToVideo();
+            } else {
+                // Buffer drift: re-assert user's intended playback speed
+                if (validSpeed(persistentUserSpeed) && Math.abs(n - persistentUserSpeed) > 0.01) {
+                    try {
+                        isInternalRateChange = true;
+                        v.playbackRate = persistentUserSpeed;
+                        setTimeout(() => { isInternalRateChange = false; }, 80);
+                    } catch (_) {}
                 }
             }
         }, { signal });
@@ -3884,6 +3931,11 @@
         setTimeout(() => { isInternalRateChange = false; }, 80);
 
         prefs.speed = rate;
+        persistentUserSpeed = rate;
+        temporaryBoostActive = false;
+        temporaryBoostOriginalSpeed = null;
+        clearTimeout(temporaryBoostRestoreTimer);
+        temporaryBoostRestoreTimer = null;
         saveValue(siteKey('speed'), rate);
         syncExtraSpeedSelect();
 
@@ -4699,8 +4751,14 @@
 
     function isOverPlayerControl(e) {
         const path = e.composedPath ? e.composedPath() : [e.target];
-        return path.some(node =>
-            node instanceof HTMLElement && (
+        return path.some(node => {
+            if (!(node instanceof HTMLElement)) return false;
+            if (node.id === 'movie_player' || node.classList?.contains('html5-video-player')) {
+                return false;
+            }
+            if (node instanceof HTMLVideoElement) return false;
+
+            return (
                 node.tagName === 'BUTTON' ||
                 node.tagName === 'INPUT' ||
                 node.tagName === 'SELECT' ||
@@ -4710,11 +4768,12 @@
                 node.getAttribute?.('role') === 'menuitem' ||
                 node.hasAttribute?.('aria-controls') ||
                 node.classList?.contains('ytp-chrome-bottom') ||
+                node.classList?.contains('ytp-chrome-top') ||
                 node.classList?.contains('control-bar') ||
                 node.classList?.contains('player-controls') ||
-                node.closest?.('.vjs-control-bar, .art-controls, [class*="control" i], [class*="menu" i], [class*="subtitle" i], [class*="toolbar" i], [class*="progress" i], [class*="scrub" i], [class*="slider" i], [data-testid*="player" i], [data-testid*="control" i], [data-testid*="button" i], [data-testid*="fullscreen" i]')
-            )
-        );
+                Boolean(node.closest?.('.ytp-chrome-bottom, .ytp-chrome-top, .vjs-control-bar, .art-controls, [class*="progress-bar" i], [class*="scrub" i], [class*="slider" i]'))
+            );
+        });
     }
 
     // Mouse Drag Speed Gesture: moving mouse in opposite directions (up/right = speed up, down/left = speed down)
@@ -4893,7 +4952,19 @@
         mouseDragEngaged = false;
     }
 
+    function checkTemporaryBoostRelease() {
+        if (!temporaryBoostActive) return;
+        const v = getVideo();
+        const restoreRate = temporaryBoostOriginalSpeed || persistentUserSpeed || 1.0;
+        temporaryBoostActive = false;
+        temporaryBoostOriginalSpeed = null;
+        if (v && Math.abs(Number(v.playbackRate) - restoreRate) > 0.01) {
+            setPlaybackRate(v, restoreRate, true);
+        }
+    }
+
     window.addEventListener('pointerup', e => {
+        checkTemporaryBoostRelease();
         cancelHoldBoostTimer();
         if (holdBoostEngaged) {
             releaseHoldBoost();
@@ -4907,6 +4978,7 @@
     }, true);
 
     window.addEventListener('mouseup', () => {
+        checkTemporaryBoostRelease();
         cancelHoldBoostTimer();
         if (holdBoostEngaged) {
             releaseHoldBoost();
@@ -4918,6 +4990,7 @@
     }, true);
 
     window.addEventListener('touchend', () => {
+        checkTemporaryBoostRelease();
         cancelHoldBoostTimer();
         if (holdBoostEngaged) {
             releaseHoldBoost();
@@ -4963,15 +5036,15 @@
     document.addEventListener('wheel', e => {
         if (eventIsInsideController(e)) return;
 
-        // 1. Trackpad Pinch / Ctrl+Wheel Gesture -> Speed Control (Fine 0.05x & Exponential like Enhancer for YouTube)
-        // CRITICAL: Plain two-finger scrolling on a laptop touchpad MUST NEVER mutate speed!
-        // We require e.ctrlKey (pinch simulation) AND a responsive threshold
-        // so micro-movements during page scrolling are completely ignored!
-        if (e.ctrlKey) {
+        // 1. Two-Finger Touchpad & Mouse Wheel Playback Speed Gesture (Enhancer for YouTube style)
+        // Over the video player, scrolling with two fingers on laptop touchpad or mouse wheel
+        // smoothly, freely, and fastly controls playback speed with exponential velocity acceleration!
+        if (!e.altKey && !e.shiftKey) {
             if (!prefs.trackpadSpeedEnabled) return;
 
-            const target = findVideoAtPoint(e.clientX, e.clientY);
+            const target = findVideoAtPoint(e.clientX, e.clientY) || (isYouTubePage() ? findYouTubeMainVideo() : null);
             if (!target) return;
+            if (isOverPlayerControl(e)) return;
 
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
@@ -4979,46 +5052,51 @@
             try { e.stopPropagation(); } catch (_) {}
 
             const dir = prefs.gestureReverse ? -1 : 1;
-            accumulatedPinchDelta += (-e.deltaY * dir);
+            accumulatedWheelDelta += (-e.deltaY * dir);
 
-            clearTimeout(trackpadPinchTimer);
-            trackpadPinchTimer = setTimeout(() => {
-                accumulatedPinchDelta = 0;
-                trackpadGestureStreak = 0;
-            }, 250);
+            const now = performance.now();
+            const dt = now - lastWheelTime;
+            lastWheelTime = now;
 
-            // Responsive pinch threshold (24px) gives immediate fluid response
-            const PINCH_STEP_THRESHOLD = 24;
-            if (Math.abs(accumulatedPinchDelta) >= PINCH_STEP_THRESHOLD) {
-                const stepUp = accumulatedPinchDelta > 0;
-                accumulatedPinchDelta = 0;
-                const curRate = Number(target.playbackRate) || 1;
+            // Track continuous velocity streak for exponential acceleration
+            if (dt < 140) {
+                wheelSpeedStreak = Math.min(12, wheelSpeedStreak + 1);
+            } else {
+                wheelSpeedStreak = 1;
+            }
 
-                // Track gesture velocity for exponential scaling (like Enhancer for YouTube)
-                const now = performance.now();
-                if (now - lastTrackpadGestureTime < 160) {
-                    trackpadGestureStreak = Math.min(8, trackpadGestureStreak + 1);
-                } else {
-                    trackpadGestureStreak = 1;
+            clearTimeout(wheelIdleTimer);
+            wheelIdleTimer = setTimeout(() => {
+                accumulatedWheelDelta = 0;
+                wheelSpeedStreak = 0;
+            }, 220);
+
+            // Responsive 14px threshold: instantaneous response to two-finger swipes
+            const WHEEL_THRESHOLD = 14;
+            if (Math.abs(accumulatedWheelDelta) >= WHEEL_THRESHOLD) {
+                while (Math.abs(accumulatedWheelDelta) >= WHEEL_THRESHOLD) {
+                    const stepUp = accumulatedWheelDelta > 0;
+                    accumulatedWheelDelta += (stepUp ? -WHEEL_THRESHOLD : WHEEL_THRESHOLD);
+
+                    const curRate = Number(target.playbackRate) || 1;
+
+                    // Dynamic step calculation:
+                    // Gentle nudge: 0.05x (Enhancer precision standard)
+                    // Fast swipe (streak >= 3): 0.10x, 0.15x, 0.20x exponential scaling
+                    let baseStep = 0.05;
+                    if (curRate >= 3.0) baseStep = 0.20;
+                    else if (curRate >= 2.0) baseStep = 0.10;
+
+                    const streakMultiplier = 1 + Math.max(0, (wheelSpeedStreak - 2) * 0.6);
+                    const stepAmount = Math.max(0.05, Math.round((baseStep * streakMultiplier) * 20) / 20);
+
+                    let nextRate = stepUp ? curRate + stepAmount : curRate - stepAmount;
+                    nextRate = Math.round(nextRate * 20) / 20; // clean 0.05 increments (1.05, 1.10, 1.35, 1.40, etc.)
+                    nextRate = Number(Math.min(MAX_SPEED, Math.max(MIN_SPEED, nextRate)).toFixed(2));
+
+                    setPlaybackRate(target, nextRate, true);
+                    if (toolbarBuilt) syncToolbar();
                 }
-                lastTrackpadGestureTime = now;
-
-                // Fine step base: 0.05x (Enhancer for YouTube standard)
-                // Scales progressively for higher speeds (>=2.0x and >=3.0x)
-                let baseStep = 0.05;
-                if (curRate >= 3.0) baseStep = 0.20;
-                else if (curRate >= 2.0) baseStep = 0.10;
-
-                // Exponential acceleration: continuous/rapid swipes smoothly scale step size
-                const streakMultiplier = 1 + Math.max(0, (trackpadGestureStreak - 2) * 0.5);
-                const stepAmount = Math.max(0.05, Math.round((baseStep * streakMultiplier) * 20) / 20);
-
-                let nextRate = stepUp ? curRate + stepAmount : curRate - stepAmount;
-                nextRate = Math.round(nextRate * 20) / 20; // clean 0.05 increments (1.05, 1.10, 1.35, 1.40, etc.)
-                nextRate = Number(Math.min(MAX_SPEED, Math.max(MIN_SPEED, nextRate)).toFixed(2));
-
-                setPlaybackRate(target, nextRate, true);
-                if (toolbarBuilt) syncToolbar();
             }
             return;
         }
@@ -5101,11 +5179,14 @@
     }
 
     window.addEventListener('keyup', e => {
-        if (isSpaceKey(e) && spaceKeyIntercepted) {
-            spaceKeyIntercepted = false;
-            try { e.preventDefault(); } catch (_) {}
-            try { e.stopPropagation(); } catch (_) {}
-            try { e.stopImmediatePropagation(); } catch (_) {}
+        if (isSpaceKey(e)) {
+            checkTemporaryBoostRelease();
+            if (spaceKeyIntercepted) {
+                spaceKeyIntercepted = false;
+                try { e.preventDefault(); } catch (_) {}
+                try { e.stopPropagation(); } catch (_) {}
+                try { e.stopImmediatePropagation(); } catch (_) {}
+            }
         }
     }, { capture: true });
 
