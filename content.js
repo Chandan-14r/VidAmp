@@ -137,6 +137,7 @@
         pinned: Boolean(loadValue('pinned', false)),
         manualPos: Boolean(loadValue('manualPos', false)),
         shortcuts: loadValue('shortcuts', true) !== false,
+        showToolbar: loadValue('showToolbar', true) !== false,
 
         // Enhanced feature flags & settings
         trackpadSpeedEnabled: loadValue('trackpadSpeedEnabled', true) !== false,
@@ -3149,6 +3150,29 @@
                 clear: both;
                 pointer-events: auto;
             }
+            :host(.mvc-docked-mode) {
+                position: absolute !important;
+                z-index: 2147483640 !important;
+                pointer-events: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: max-content !important;
+                height: max-content !important;
+                display: block !important;
+            }
+            :host(.mvc-docked-mode) #mvc-toolbar-container {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                pointer-events: none !important;
+                width: max-content !important;
+                height: max-content !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            :host(.mvc-docked-mode) #mvc-toolbar {
+                pointer-events: auto !important;
+            }
             :host(.mvc-floating-mode) {
                 position: fixed !important;
                 z-index: 2147483645 !important;
@@ -3197,9 +3221,14 @@
                 user-select: none;
                 backdrop-filter: blur(16px);
                 -webkit-backdrop-filter: blur(16px);
-                transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+                transition: transform 0.2s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.25s ease;
                 pointer-events: auto !important;
                 cursor: grab;
+            }
+            #mvc-toolbar.mvc-autohide {
+                opacity: 0 !important;
+                pointer-events: none !important;
+                transform: translateY(6px) !important;
             }
             #mvc-toolbar:hover {
                 border-color: rgba(255, 255, 255, 0.22);
@@ -3445,7 +3474,8 @@
             download:    icon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'),
             bookmark:    icon('<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>'),
             sleep:       icon('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'),
-            settings:    icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>')
+            settings:    icon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
+            close:       icon('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>')
         };
 
         const btn = (id, iconKey, title) => {
@@ -3489,6 +3519,12 @@
         const btnBookmark   = btn('bookmark', 'bookmark', 'Video Bookmark (Click: Save, Right-Click: List)');
         const btnSleep      = btn('sleep', 'sleep', 'Sleep Timer (Click: 15m/30m/45m/60m/End/Off)');
         const btnSettings   = btn('settings', 'settings', 'Video Controller Panel');
+        const btnClose      = btn('close', 'close', 'Hide toolbar (Press Alt+T to restore)');
+        btnClose.style.marginLeft = '3px';
+        btnClose.style.opacity = '0.7';
+        btnClose.onmouseenter = () => btnClose.style.opacity = '1';
+        btnClose.onmouseleave = () => btnClose.style.opacity = '0.7';
+        btnClose.onclick = () => toggleToolbarVisibility(false);
 
         // Assemble toolbar
         tb.appendChild(btnLoop);
@@ -3512,6 +3548,7 @@
         tb.appendChild(btnSleep);
         tb.appendChild(sep());
         tb.appendChild(btnSettings);
+        tb.appendChild(btnClose);
 
         wrap.appendChild(tb);
 
@@ -3699,6 +3736,16 @@
             window.addEventListener('pointerup', onPointerUp, true);
         });
 
+        // Double-click empty space on toolbar to reset custom position and dock back under video
+        tb.addEventListener('dblclick', e => {
+            if (e.target.closest('button, input, select, .sp-pill, .bm-item, #mvc-speed-popover, #mvc-bookmark-popover')) {
+                return;
+            }
+            toolbarCustomPos = null;
+            mountToolbarInPage();
+            showToast('📍 Toolbar docked under video');
+        });
+
         // Close popovers on outer click
         document.addEventListener('click', () => {
             if (speedPopover) speedPopover.classList.remove('visible');
@@ -3809,10 +3856,51 @@
         }
     }
 
-    // Mount toolbar directly above video description (YouTube) or float directly below video player (Hotstar, generic sites)
+    function toggleToolbarVisibility(forceState) {
+        const nextState = typeof forceState === 'boolean' ? forceState : (prefs.showToolbar === false);
+        prefs.showToolbar = nextState;
+        storeValue('showToolbar', nextState);
+        if (toolbarHost) {
+            if (nextState) {
+                mountToolbarInPage();
+                showToast('🎛️ Toolbar visible (Alt+T)');
+            } else {
+                toolbarHost.style.setProperty('display', 'none', 'important');
+                showToast('🎛️ Toolbar hidden (Press Alt+T to restore)');
+            }
+        }
+    }
+
+    let toolbarIdleTimer = null;
+    function resetToolbarIdle() {
+        if (!toolbarBuilt || !tbShadow) return;
+        const tb = tbShadow.querySelector('#mvc-toolbar');
+        if (!tb) return;
+        tb.classList.remove('mvc-autohide');
+
+        clearTimeout(toolbarIdleTimer);
+        // Only autohide if custom floating mode is active
+        if (toolbarHost && toolbarHost.classList.contains('mvc-floating-mode')) {
+            toolbarIdleTimer = setTimeout(() => {
+                if (tb && !tb.matches(':hover')) {
+                    tb.classList.add('mvc-autohide');
+                }
+            }, 2500);
+        }
+    }
+
+    window.addEventListener('mousemove', resetToolbarIdle, { passive: true });
+    window.addEventListener('pointermove', resetToolbarIdle, { passive: true });
+
+    // Mount toolbar directly above video description (YouTube) or dock cleanly directly UNDER video player (Hotstar, generic sites)
     function mountToolbarInPage() {
         if (!toolbarBuilt || !toolbarHost) return;
         if (isDraggingToolbar) return;
+        if (prefs.showToolbar === false) {
+            toolbarHost.style.setProperty('display', 'none', 'important');
+            return;
+        }
+
         const v = getVideo();
 
         const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
@@ -3828,6 +3916,7 @@
 
             if (watchMetadata && watchMetadata.parentNode) {
                 toolbarHost.classList.remove('mvc-floating-mode');
+                toolbarHost.classList.remove('mvc-docked-mode');
                 toolbarHost.style.cssText = [
                     'position: relative !important',
                     'display: block !important',
@@ -3854,16 +3943,9 @@
 
         // 2. Generic Video Sites (Hotstar, JioCinema, Netflix, Prime Video, Vimeo, etc.)
         // NEVER inject into the site's internal component tree or flex containers!
-        // Instead, mount to document.body and float cleanly directly BELOW the video player or ABOVE native player controls!
+        // Instead, mount to document.body and place cleanly directly UNDER the video player container!
         const body = document.body || document.documentElement;
         if (!body) return;
-
-        toolbarHost.classList.add('mvc-floating-mode');
-        if (toolbarHost.parentNode !== body) {
-            try {
-                body.appendChild(toolbarHost);
-            } catch (_) {}
-        }
 
         const rect = v.getBoundingClientRect();
         // If video is scrolled off-screen or invisible, hide
@@ -3876,44 +3958,71 @@
         const tbWidth = (tb && tb.offsetWidth > 0) ? tb.offsetWidth : 440;
         const tbHeight = (tb && tb.offsetHeight > 0) ? tb.offsetHeight : 32;
 
-        // Center horizontally with the video
-        let left = rect.left + (rect.width - tbWidth) / 2;
-        left = Math.max(12, Math.min(window.innerWidth - tbWidth - 12, left));
-
-        // Position vertically:
-        let top;
         if (toolbarCustomPos && typeof toolbarCustomPos.top === 'number') {
-            top = Math.max(8, Math.min(window.innerHeight - tbHeight - 8, toolbarCustomPos.top));
-            left = Math.max(8, Math.min(window.innerWidth - tbWidth - 8, toolbarCustomPos.left));
-        } else {
-            const spaceBelow = window.innerHeight - rect.bottom;
-            if (spaceBelow >= tbHeight + 10) {
-                // Room below video: place directly underneath in regular page flow space
-                top = rect.bottom + 8;
-            } else {
-                // Fullscreen / theater / edge-to-edge video (Hotstar, JioCinema, Netflix, Prime Video, etc.)
-                // CRITICAL: Sit 75px ABOVE the bottom so Hotstar's native controls (timeline, play, volume, fullscreen)
-                // remain 100% visible, fully clickable, and completely unobstructed!
-                top = Math.max(rect.top + 16, rect.bottom - tbHeight - 75);
+            // User explicitly dragged toolbar to a custom floating position
+            toolbarHost.classList.remove('mvc-docked-mode');
+            toolbarHost.classList.add('mvc-floating-mode');
+            if (toolbarHost.parentNode !== body) {
+                try { body.appendChild(toolbarHost); } catch (_) {}
             }
-            top = Math.max(8, Math.min(window.innerHeight - tbHeight - 8, top));
-        }
 
-        toolbarHost.style.cssText = [
-            'position: fixed !important',
-            `left: ${Math.round(left)}px !important`,
-            `top: ${Math.round(top)}px !important`,
-            'width: max-content !important',
-            'height: max-content !important',
-            'z-index: 2147483645 !important',
-            'pointer-events: none !important',
-            'margin: 0 !important',
-            'padding: 0 !important',
-            'border: none !important',
-            'background: transparent !important',
-            'display: block !important',
-            'transform: none !important'
-        ].join(';');
+            const left = Math.max(8, Math.min(window.innerWidth - tbWidth - 8, toolbarCustomPos.left));
+            const top = Math.max(8, Math.min(window.innerHeight - tbHeight - 8, toolbarCustomPos.top));
+
+            toolbarHost.style.cssText = [
+                'position: fixed !important',
+                `left: ${Math.round(left)}px !important`,
+                `top: ${Math.round(top)}px !important`,
+                'width: max-content !important',
+                'height: max-content !important',
+                'z-index: 2147483645 !important',
+                'pointer-events: none !important',
+                'margin: 0 !important',
+                'padding: 0 !important',
+                'border: none !important',
+                'background: transparent !important',
+                'display: block !important',
+                'transform: none !important'
+            ].join(';');
+        } else {
+            // Default position: DOCKED STRICTLY UNDER THE VIDEO (Zero Overlap with the video!)
+            toolbarHost.classList.remove('mvc-floating-mode');
+            toolbarHost.classList.add('mvc-docked-mode');
+            if (toolbarHost.parentNode !== body) {
+                try { body.appendChild(toolbarHost); } catch (_) {}
+            }
+
+            // Target the video container or fallback to video element
+            const player = findFullscreenTarget(v) || v.parentElement || v;
+            const targetEl = (player && player !== body && player !== document.documentElement) ? player : v;
+            const pRect = targetEl.getBoundingClientRect();
+
+            const effectiveBottom = Math.max(rect.bottom, pRect.bottom);
+            const effectiveLeft = Math.min(rect.left, pRect.left);
+            const effectiveWidth = Math.max(rect.width, pRect.width);
+
+            // In document coordinates: sit immediately UNDER the video container
+            const docTop = effectiveBottom + window.scrollY + 8;
+            let docLeft = effectiveLeft + window.scrollX + (effectiveWidth - tbWidth) / 2;
+            const maxScrollW = document.documentElement.scrollWidth || window.innerWidth;
+            docLeft = Math.max(12, Math.min(maxScrollW - tbWidth - 12, docLeft));
+
+            toolbarHost.style.cssText = [
+                'position: absolute !important',
+                `left: ${Math.round(docLeft)}px !important`,
+                `top: ${Math.round(docTop)}px !important`,
+                'width: max-content !important',
+                'height: max-content !important',
+                'z-index: 2147483640 !important',
+                'pointer-events: none !important',
+                'margin: 0 !important',
+                'padding: 0 !important',
+                'border: none !important',
+                'background: transparent !important',
+                'display: block !important',
+                'transform: none !important'
+            ].join(';');
+        }
 
         syncToolbar();
     }
@@ -5293,6 +5402,14 @@
             return;
         }
 
+        // Alt + T: Toggle Below-Video Toolbar (show / hide)
+        if (e.altKey && !e.ctrlKey && !e.metaKey && (String(e.key).toLowerCase() === 't' || e.code === 'KeyT')) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleToolbarVisibility();
+            return;
+        }
+
         if (!prefs.shortcuts) return;
 
         // Editable-element protection: never intercept typing in comment or search boxes!
@@ -5605,6 +5722,15 @@
                 if (key === 'shortcuts') {
                     prefs.shortcuts = change.newValue !== false;
                     if (shortcutsCheck) shortcutsCheck.checked = prefs.shortcuts;
+                } else if (key === 'showToolbar') {
+                    prefs.showToolbar = change.newValue !== false;
+                    if (toolbarHost) {
+                        if (prefs.showToolbar) {
+                            mountToolbarInPage();
+                        } else {
+                            toolbarHost.style.setProperty('display', 'none', 'important');
+                        }
+                    }
                 } else if (key === 'trackpadSpeedEnabled') {
                     prefs.trackpadSpeedEnabled = change.newValue !== false;
                     if (trackpadCheck) trackpadCheck.checked = prefs.trackpadSpeedEnabled;

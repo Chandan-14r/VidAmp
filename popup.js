@@ -193,6 +193,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initFilterReset();
 
     // Player
+    await bindCheckbox('show-toolbar-toggle', 'showToolbar', true);
     await bindCheckbox('smart-miniplayer-toggle', 'smartMiniplayerEnabled', false);
 
     // Site
