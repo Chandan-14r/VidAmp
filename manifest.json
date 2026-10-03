@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "VidAmp- Universal Video Enhancer & Speed Controller",
   "short_name": "VidAmp",
-  "version": "6.1.0",
+  "version": "6.1.1",
   "description": "Touchpad speed gestures, ambient glow, studio EQ, frame stepper, and smart video downloader for YouTube & web videos.",
   "permissions": [
     "storage",

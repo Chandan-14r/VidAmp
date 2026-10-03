@@ -9,7 +9,7 @@
     <a href="#-key-features"><img src="https://img.shields.io/badge/Manifest-V3-blue.svg?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Manifest V3" /></a>
     <a href="#-universal-multi-browser-support"><img src="https://img.shields.io/badge/Browsers-Chrome%20%7C%20Edge%20%7C%20Brave%20%7C%20Firefox-orange?style=for-the-badge" alt="Cross-Browser" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="MIT License" /></a>
-    <img src="https://img.shields.io/badge/Version-6.1.0-purple.svg?style=for-the-badge" alt="Version 6.1.0" />
+    <img src="https://img.shields.io/badge/Version-6.1.1-purple.svg?style=for-the-badge" alt="Version 6.1.1" />
   </p>
 
   <p>

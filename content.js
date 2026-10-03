@@ -3019,6 +3019,32 @@
                 z-index: 100;
                 clear: both;
             }
+            :host(.mvc-floating-mode) {
+                position: fixed !important;
+                z-index: 2147483645 !important;
+                pointer-events: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: auto !important;
+                height: auto !important;
+                left: 0 !important;
+                top: 0 !important;
+                display: block !important;
+                transform: translate(var(--mvc-tb-x, 0px), var(--mvc-tb-y, 0px)) !important;
+                transition: opacity 0.15s ease, transform 0.08s ease !important;
+            }
+            :host(.mvc-floating-mode) #mvc-toolbar-container {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                pointer-events: none !important;
+                width: auto !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            :host(.mvc-floating-mode) #mvc-toolbar {
+                pointer-events: auto !important;
+            }
             #mvc-toolbar-container {
                 position: relative;
                 display: flex;
@@ -3613,23 +3639,20 @@
         }
     }
 
-    // Mount toolbar directly above video description / below video player
+    // Mount toolbar directly above video description (YouTube) or float directly below video player (Hotstar, generic sites)
     function mountToolbarInPage() {
         if (!toolbarBuilt || !toolbarHost) return;
         const v = getVideo();
 
-        if (!v || !isLargeVideo(v) || Boolean(document.fullscreenElement)) {
+        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        if (!v || !isLargeVideo(v) || isFullscreen) {
             if (toolbarHost.style.display !== 'none') {
                 toolbarHost.style.display = 'none';
             }
             return;
         }
 
-        if (toolbarHost.style.display !== 'block') {
-            toolbarHost.style.display = 'block';
-        }
-
-        // 1. YouTube Watch Page: Place directly below player and directly ABOVE the video title
+        // 1. YouTube Watch Page: Place directly below player and directly ABOVE the video title in page flow
         if (isYouTubePage()) {
             const targetEl = document.querySelector('ytd-watch-metadata #title') ||
                              document.querySelector('#above-the-fold #title') ||
@@ -3637,41 +3660,85 @@
                              document.querySelector('ytd-watch-metadata');
 
             if (targetEl && targetEl.parentNode) {
-                // If already attached to targetEl.parentNode, DO NOT re-insert or churn DOM
-                if (toolbarHost.isConnected && toolbarHost.parentNode === targetEl.parentNode) {
-                    syncToolbar();
-                    return;
+                toolbarHost.classList.remove('mvc-floating-mode');
+                toolbarHost.style.removeProperty('--mvc-tb-x');
+                toolbarHost.style.removeProperty('--mvc-tb-y');
+                toolbarHost.style.position = '';
+                toolbarHost.style.zIndex = '';
+                toolbarHost.style.pointerEvents = '';
+
+                if (toolbarHost.style.display !== 'block') {
+                    toolbarHost.style.display = 'block';
                 }
 
-                try {
-                    targetEl.parentNode.insertBefore(toolbarHost, targetEl);
-                } catch (_) {}
+                if (!toolbarHost.isConnected || toolbarHost.parentNode !== targetEl.parentNode) {
+                    try {
+                        targetEl.parentNode.insertBefore(toolbarHost, targetEl);
+                    } catch (_) {}
+                }
                 syncToolbar();
                 return;
             }
         }
 
-        // 2. Generic Video Sites: Mount directly below the player container in normal page flow
-        const playerContainer = v.closest('#movie_player') ||
-                                v.closest('.html5-video-player') ||
-                                v.closest('[class*="video-player" i]') ||
-                                v.closest('[class*="player" i]') ||
-                                v.parentElement ||
-                                v;
+        // 2. Generic Video Sites (Hotstar, JioCinema, Netflix, Prime Video, Vimeo, etc.)
+        // NEVER inject into the site's internal component tree or flex containers!
+        // Instead, mount to document.body and float cleanly directly BELOW the video player!
+        const body = document.body || document.documentElement;
+        if (!body) return;
 
-        if (playerContainer && playerContainer.parentNode) {
-            if (!toolbarHost.isConnected || toolbarHost.parentNode !== playerContainer.parentNode) {
-                try {
-                    playerContainer.insertAdjacentElement('afterend', toolbarHost);
-                } catch (_) {}
-            }
-            syncToolbar();
+        toolbarHost.classList.add('mvc-floating-mode');
+        if (toolbarHost.parentNode !== body) {
+            try {
+                body.appendChild(toolbarHost);
+            } catch (_) {}
         }
+
+        const rect = v.getBoundingClientRect();
+        // If video is scrolled off-screen or invisible, hide
+        if (rect.bottom < 40 || rect.top > window.innerHeight - 40 || rect.width <= 0 || rect.height <= 0) {
+            toolbarHost.style.display = 'none';
+            return;
+        }
+
+        const tb = tbShadow.querySelector('#mvc-toolbar');
+        const tbWidth = (tb && tb.offsetWidth > 0) ? tb.offsetWidth : 440;
+        const tbHeight = (tb && tb.offsetHeight > 0) ? tb.offsetHeight : 42;
+
+        // Center horizontally with the video
+        let left = rect.left + (rect.width - tbWidth) / 2;
+        left = Math.max(12, Math.min(window.innerWidth - tbWidth - 12, left));
+
+        // Position vertically: prefer directly below the video player
+        const spaceBelow = window.innerHeight - rect.bottom;
+        let top;
+        if (spaceBelow >= tbHeight + 10) {
+            // Room below video: place directly underneath
+            top = rect.bottom + 8;
+        } else {
+            // Video extends to bottom of viewport (theater / expanded view):
+            // Place inside bottom-center of video player
+            top = rect.bottom - tbHeight - 16;
+        }
+        top = Math.max(10, Math.min(window.innerHeight - tbHeight - 10, top));
+
+        toolbarHost.style.setProperty('--mvc-tb-x', Math.round(left) + 'px');
+        toolbarHost.style.setProperty('--mvc-tb-y', Math.round(top) + 'px');
+
+        if (toolbarHost.style.display !== 'block') {
+            toolbarHost.style.display = 'block';
+        }
+
+        syncToolbar();
     }
 
     const positionToolbar = mountToolbarInPage;
 
     document.addEventListener('fullscreenchange', () => {
+        if (toolbarBuilt) mountToolbarInPage();
+    }, { passive: true });
+
+    document.addEventListener('webkitfullscreenchange', () => {
         if (toolbarBuilt) mountToolbarInPage();
     }, { passive: true });
 
@@ -3712,7 +3779,7 @@
         syncToolbar();
     }
 
-    // Hook toolbar into resize (inline toolbar does not need scroll repositioning)
+    // Hook toolbar into resize and scroll so floating overlay tracks the video smoothly
     let toolbarRepositionRaf = false;
     function scheduleToolbarReposition() {
         if (toolbarRepositionRaf) return;
@@ -3723,6 +3790,7 @@
         });
     }
 
+    window.addEventListener('scroll', scheduleToolbarReposition, { passive: true, capture: true });
     window.addEventListener('resize', scheduleToolbarReposition, { passive: true });
 
     /* =========================================================
@@ -4125,11 +4193,29 @@
         if (!v) return;
 
         try {
-            if (document.fullscreenElement) {
-                await document.exitFullscreen();
+            if (document.fullscreenElement || document.webkitFullscreenElement) {
+                if (document.exitFullscreen) await document.exitFullscreen();
+                else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
                 return;
             }
 
+            // 1. YouTube native fullscreen button
+            if (isYouTubePage()) {
+                const ytFsBtn = document.querySelector('button.ytp-fullscreen-button');
+                if (ytFsBtn) {
+                    ytFsBtn.click();
+                    return;
+                }
+            }
+
+            // 2. Generic site native fullscreen button (e.g. Hotstar, Netflix, Prime, etc.)
+            const siteFsBtn = document.querySelector('[class*="fullscreen" i] button, button[class*="fullscreen" i], [aria-label*="fullscreen" i], [title*="fullscreen" i], button[data-testid*="fullscreen" i]');
+            if (siteFsBtn && typeof siteFsBtn.click === 'function') {
+                siteFsBtn.click();
+                return;
+            }
+
+            // 3. Target player container or video element directly (NEVER detach video from DOM!)
             let target = findFullscreenTarget(v);
             if (!target && v.parentElement && v.parentElement !== document.body) {
                 target = v.parentElement;
@@ -4143,8 +4229,10 @@
                     restoreHost();
                     throw err;
                 }
-            } else {
-                await enterFallbackFullscreen(v);
+            } else if (typeof v.requestFullscreen === 'function') {
+                await v.requestFullscreen();
+            } else if (typeof v.webkitRequestFullscreen === 'function') {
+                await v.webkitRequestFullscreen();
             }
         } catch (_) {
             showToast('Fullscreen unavailable');
