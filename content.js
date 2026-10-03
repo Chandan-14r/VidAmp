@@ -341,7 +341,6 @@
     let hideTimer = null;
     let toastTimer = null;
     let lastPointer = null;
-    const autoShownVideos = new WeakSet();
 
     // A/B Loop State
     let loopA = null;
@@ -1298,18 +1297,6 @@
         }
 
         observeOpenShadowRoots();
-
-        if (
-            panelBuilt &&
-            video &&
-            !autoShownVideos.has(video) &&
-            !video.paused &&
-            Number(video.currentTime) <= 1.5 &&
-            isLargeVideo(video)
-        ) {
-            autoShownVideos.add(video);
-            showPanel();
-        }
 
         if (toolbarBuilt) {
             positionToolbar();
@@ -4498,14 +4485,6 @@
         if (!prefs.manualPos) {
             positionPanelSmartly(true, lastPointer);
         }
-
-        if (!autoShownVideos.has(target)) {
-            const nearBeginning = Number(target.currentTime) <= 1.5;
-            if (nearBeginning) {
-                autoShownVideos.add(target);
-                showPanel();
-            }
-        }
     }, true);
 
     document.addEventListener('pointermove', e => {
@@ -5673,16 +5652,6 @@
                 syncControlsToVideo();
                 updateVideoCounter();
                 setupSmartMiniplayer();
-
-                if (
-                    evt === 'playing' &&
-                    !autoShownVideos.has(yt) &&
-                    Number(yt.currentTime) <= 1.5 &&
-                    isLargeVideo(yt)
-                ) {
-                    autoShownVideos.add(yt);
-                    showPanel();
-                }
             }, true);
         });
 
