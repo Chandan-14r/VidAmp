@@ -3195,6 +3195,7 @@
 
     let toolbarBuildInProgress = false;
     function buildToolbar() {
+        if (window.self !== window.top) return;
         if (toolbarBuilt || toolbarBuildInProgress) return;
         toolbarBuildInProgress = true;
 
@@ -3950,6 +3951,7 @@
     }
 
     function toggleToolbarVisibility(forceState) {
+        if (window.self !== window.top) return;
         const nextState = typeof forceState === 'boolean' ? forceState : (prefs.showToolbar === false);
         prefs.showToolbar = nextState;
         saveValue('showToolbar', nextState);
@@ -3975,12 +3977,42 @@
 
     function setFullscreenUi(active) {
         clearTimeout(toolbarIdleTimer);
-        if (toolbarHost) {
-            if (active) {
+        if (active) {
+            if (toolbarHost) {
                 toolbarHost.style.setProperty('display', 'none', 'important');
-            } else if (prefs.showToolbar !== false) {
-                requestAnimationFrame(() => mountToolbarInPage());
             }
+            if (sideTabHost) {
+                sideTabHost.style.setProperty('display', 'none', 'important');
+            }
+        } else {
+            // Exiting fullscreen:
+            if (sideTabHost) {
+                sideTabHost.style.removeProperty('display');
+            }
+            if (toolbarHost) {
+                // Toolbar should ONLY be restored if user explicitly has showToolbar enabled AND it was not hidden
+                if (prefs.showToolbar === true && !toolbarHost.classList.contains('mvc-hidden') && !toolbarHost.hasAttribute('hidden')) {
+                    setTimeout(() => {
+                        const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+                        if (!isFs && toolbarHost && prefs.showToolbar === true && !toolbarHost.classList.contains('mvc-hidden')) {
+                            toolbarHost.style.removeProperty('display');
+                            mountToolbarInPage();
+                        }
+                    }, 180);
+                } else {
+                    toolbarHost.classList.add('mvc-hidden');
+                    toolbarHost.setAttribute('hidden', '');
+                    toolbarHost.style.setProperty('display', 'none', 'important');
+                    toolbarHost.style.setProperty('visibility', 'hidden', 'important');
+                }
+            }
+
+            setTimeout(() => {
+                const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+                if (!isFs && sideTabBuilt) {
+                    positionSideTab();
+                }
+            }, 180);
         }
 
         if (fullscreenBtn) {
@@ -4014,6 +4046,7 @@
 
     // Mount toolbar directly above video description (YouTube) or dock cleanly directly UNDER video player (Hotstar, generic sites)
     function mountToolbarInPage(targetVideo) {
+        if (window.self !== window.top) return;
         if (!toolbarBuilt || !toolbarHost) return;
         if (isDraggingToolbar) return;
         if (prefs.showToolbar === false || toolbarHost.classList.contains('mvc-hidden') || toolbarHost.hasAttribute('hidden')) {
@@ -4034,6 +4067,12 @@
 
         // 1. YouTube Watch Page: Place cleanly in page block flow BEFORE ytd-watch-metadata (below player/Enhancer and above title)
         if (isYouTubePage()) {
+            const isFullscreenYt = Boolean(document.fullscreenElement || document.webkitFullscreenElement || (v && v.closest && v.closest('.ytp-fullscreen')));
+            if (isFullscreenYt) {
+                toolbarHost.style.setProperty('display', 'none', 'important');
+                return;
+            }
+
             const watchMetadata = document.querySelector('ytd-watch-metadata') ||
                                   document.querySelector('#below');
 
@@ -4079,7 +4118,7 @@
 
         const tb = tbShadow.querySelector('#mvc-toolbar');
         const tbWidth = (tb && tb.offsetWidth > 0) ? tb.offsetWidth : 440;
-        const tbHeight = (tb && tb.offsetHeight > 0) ? tb.offsetHeight : 32;
+        const tbHeight = (tb && tb.offsetHeight > 0) ? tb.offsetHeight : 36;
 
         if (toolbarCustomPos && typeof toolbarCustomPos.top === 'number') {
             // User explicitly dragged toolbar to a custom floating position
@@ -4119,15 +4158,23 @@
             const player = findFullscreenTarget(v) || v.parentElement || v;
             const targetEl = (player && player !== body && player !== document.documentElement) ? player : v;
             const pRect = targetEl.getBoundingClientRect();
+            const bodyRect = body.getBoundingClientRect();
 
-            const effectiveBottom = Math.max(rect.bottom, pRect.bottom);
-            const effectiveLeft = Math.min(rect.left, pRect.left);
+            // Accurate document coordinates relative to body coordinate space
+            const effectiveBottomDoc = Math.max(rect.bottom, pRect.bottom) - bodyRect.top;
+            const effectiveLeftDoc = Math.min(rect.left, pRect.left) - bodyRect.left;
             const effectiveWidth = Math.max(rect.width, pRect.width);
 
             // In document coordinates: sit immediately UNDER the video container
-            const docTop = effectiveBottom + window.scrollY + 8;
-            let docLeft = effectiveLeft + window.scrollX + (effectiveWidth - tbWidth) / 2;
-            const maxScrollW = document.documentElement.scrollWidth || window.innerWidth;
+            let docTop = effectiveBottomDoc + 8;
+            // Absolute floor: docTop MUST NEVER be less than the video's bottom edge + 8px
+            const minAllowedDocTop = (rect.bottom - bodyRect.top) + 8;
+            if (docTop < minAllowedDocTop) {
+                docTop = minAllowedDocTop;
+            }
+
+            let docLeft = effectiveLeftDoc + (effectiveWidth - tbWidth) / 2;
+            const maxScrollW = body.scrollWidth || window.innerWidth;
             docLeft = Math.max(12, Math.min(maxScrollW - tbWidth - 12, docLeft));
 
             toolbarHost.style.cssText = [
@@ -4151,14 +4198,6 @@
     }
 
     const positionToolbar = mountToolbarInPage;
-
-    document.addEventListener('fullscreenchange', () => {
-        if (toolbarBuilt) mountToolbarInPage();
-    }, { passive: true });
-
-    document.addEventListener('webkitfullscreenchange', () => {
-        if (toolbarBuilt) mountToolbarInPage();
-    }, { passive: true });
 
     if (isYouTubePage()) {
         let ytMountScheduled = false;
@@ -4209,6 +4248,7 @@
        ========================================================= */
 
     function updateSideTabState(forceOpen) {
+        if (window.self !== window.top) return;
         if (!sideTabBuilt || !sideTabBtn) return;
         const open = typeof forceOpen === 'boolean' ? forceOpen : Boolean(prefs.showToolbar);
         sideTabBtn.classList.toggle('active', open);
@@ -4219,8 +4259,17 @@
     }
 
     function positionSideTab(targetVideo) {
+        if (window.self !== window.top) return;
         if (!sideTabBuilt || !sideTabHost || !sideTabBtn) return;
         if (isDraggingSideTab) return;
+
+        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        if (isFullscreen) {
+            sideTabHost.classList.remove('visible');
+            sideTabHost.style.setProperty('display', 'none', 'important');
+            return;
+        }
+        sideTabHost.style.removeProperty('display');
 
         const v = targetVideo || video || (isRefreshingVideos ? null : getVideo());
         if (!v || !isLargeVideo(v)) {
@@ -4288,6 +4337,7 @@
     window.addEventListener('pointermove', resetSideTabIdle, { passive: true });
 
     function buildSideTab() {
+        if (window.self !== window.top) return;
         if (sideTabBuilt) return;
         const body = document.body || document.documentElement;
         if (!body) return;
@@ -4444,26 +4494,26 @@
         positionSideTab();
     }
 
-    // Hook toolbar & side tab into resize, scroll, and fullscreen
+    // Hook toolbar & side tab into resize and scroll
     let toolbarRepositionRaf = false;
     function scheduleToolbarReposition() {
+        if (window.self !== window.top) return;
         if (toolbarRepositionRaf) return;
         toolbarRepositionRaf = true;
         requestAnimationFrame(() => {
             toolbarRepositionRaf = false;
-            positionToolbar();
-            if (sideTabBuilt) positionSideTab();
+            const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+            if (!isFs) {
+                if (prefs.showToolbar === true && toolbarHost && !toolbarHost.classList.contains('mvc-hidden')) {
+                    positionToolbar();
+                }
+                if (sideTabBuilt) positionSideTab();
+            }
         });
     }
 
     window.addEventListener('resize', scheduleToolbarReposition, { passive: true });
     window.addEventListener('scroll', scheduleToolbarReposition, { passive: true, capture: true });
-    document.addEventListener('fullscreenchange', () => {
-        scheduleToolbarReposition();
-    }, { passive: true });
-    document.addEventListener('webkitfullscreenchange', () => {
-        scheduleToolbarReposition();
-    }, { passive: true });
 
     /* =========================================================
        Playback Rate Controller
