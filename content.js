@@ -156,7 +156,7 @@
         pinned: Boolean(loadValue('pinned', false)),
         manualPos: Boolean(loadValue('manualPos', false)),
         shortcuts: loadValue('shortcuts', true) !== false,
-        showToolbar: loadValue('showToolbar', true) !== false,
+        showToolbar: Boolean(loadValue('showToolbar', false)),
 
         // Enhanced feature flags & settings
         trackpadSpeedEnabled: loadValue('trackpadSpeedEnabled', true) !== false,
@@ -451,6 +451,16 @@
     let isDraggingToolbar = false;
     let toolbarDragStart = null;
     const MIN_VIDEO_AREA_PCT = 0.25; // 25% of viewport to show toolbar
+
+    // Side dropdown tab state (collapses/expands below-video toolbar on demand)
+    let sideTabHost = null;
+    let sideTabShadow = null;
+    let sideTabBtn = null;
+    let sideTabBuilt = false;
+    let sideTabCustomPos = null;
+    let isDraggingSideTab = false;
+    let sideTabDragStart = null;
+    let sideTabIdleTimer = null;
 
     // === Audio FX State (Bass Boost & Vocal Clarity) ===
     let bassBoostActive = false;
@@ -1452,6 +1462,11 @@
 
             if (toolbarBuilt) {
                 positionToolbar(video);
+            }
+            if (!sideTabBuilt) {
+                buildSideTab();
+            } else {
+                positionSideTab(video);
             }
         } finally {
             isRefreshingVideos = false;
@@ -3831,6 +3846,7 @@
         toolbarBuilt = true;
         toolbarBuildInProgress = false;
         mountToolbarInPage(video);
+        if (!sideTabBuilt) buildSideTab();
     }
 
     // Sync toolbar icon states
@@ -3937,6 +3953,7 @@
         const nextState = typeof forceState === 'boolean' ? forceState : (prefs.showToolbar === false);
         prefs.showToolbar = nextState;
         saveValue('showToolbar', nextState);
+        updateSideTabState(nextState);
         if (toolbarHost) {
             if (nextState) {
                 toolbarHost.classList.remove('mvc-hidden');
@@ -3950,9 +3967,10 @@
                 toolbarHost.setAttribute('hidden', '');
                 toolbarHost.style.setProperty('display', 'none', 'important');
                 toolbarHost.style.setProperty('visibility', 'hidden', 'important');
-                showToast('🎛️ Toolbar hidden (Press Alt+T to restore)');
+                showToast('🎛️ Toolbar hidden (Press ⚡ VidAmp tab to restore)');
             }
         }
+        resetSideTabIdle();
     }
 
     function setFullscreenUi(active) {
@@ -4186,7 +4204,247 @@
         syncToolbar();
     }
 
-    // Hook toolbar into resize and fullscreen (docked mode is position: absolute so page scroll is handled 100% natively by GPU compositor)
+    /* =========================================================
+       Side Dropdown Tab (On-Demand Below-Video Toolbar Expander)
+       ========================================================= */
+
+    function updateSideTabState(forceOpen) {
+        if (!sideTabBuilt || !sideTabBtn) return;
+        const open = typeof forceOpen === 'boolean' ? forceOpen : Boolean(prefs.showToolbar);
+        sideTabBtn.classList.toggle('active', open);
+        const arrow = sideTabBtn.querySelector('.side-arrow');
+        if (arrow) {
+            arrow.textContent = open ? '▴' : '▾';
+        }
+    }
+
+    function positionSideTab(targetVideo) {
+        if (!sideTabBuilt || !sideTabHost || !sideTabBtn) return;
+        if (isDraggingSideTab) return;
+
+        const v = targetVideo || video || (isRefreshingVideos ? null : getVideo());
+        if (!v || !isLargeVideo(v)) {
+            sideTabHost.classList.remove('visible');
+            return;
+        }
+
+        const rect = v.getBoundingClientRect();
+        if (rect.bottom < 40 || rect.top > window.innerHeight - 40 || rect.width <= 0 || rect.height <= 0) {
+            sideTabHost.classList.remove('visible');
+            return;
+        }
+
+        const tabWidth = (sideTabBtn.offsetWidth > 0) ? sideTabBtn.offsetWidth : 96;
+        const tabHeight = (sideTabBtn.offsetHeight > 0) ? sideTabBtn.offsetHeight : 28;
+
+        if (sideTabCustomPos && typeof sideTabCustomPos.left === 'number') {
+            const left = Math.max(4, Math.min(window.innerWidth - tabWidth - 4, sideTabCustomPos.left));
+            const top = Math.max(4, Math.min(window.innerHeight - tabHeight - 4, sideTabCustomPos.top));
+            sideTabHost.style.cssText = [
+                'position: fixed !important',
+                `left: ${Math.round(left)}px !important`,
+                `top: ${Math.round(top)}px !important`,
+                'display: block !important',
+                'z-index: 2147483646 !important',
+                'pointer-events: none !important'
+            ].join(';');
+        } else {
+            // Default position: floating cleanly in the upper-right corner of the video player
+            const defaultLeft = rect.right - tabWidth - 14;
+            const defaultTop = rect.top + Math.max(12, Math.min(48, rect.height * 0.1));
+
+            const clampedLeft = Math.max(8, Math.min(window.innerWidth - tabWidth - 8, defaultLeft));
+            const clampedTop = Math.max(8, Math.min(window.innerHeight - tabHeight - 8, defaultTop));
+
+            sideTabHost.style.cssText = [
+                'position: fixed !important',
+                `left: ${Math.round(clampedLeft)}px !important`,
+                `top: ${Math.round(clampedTop)}px !important`,
+                'display: block !important',
+                'z-index: 2147483646 !important',
+                'pointer-events: none !important'
+            ].join(';');
+        }
+
+        sideTabHost.classList.add('visible');
+        updateSideTabState();
+    }
+
+    function resetSideTabIdle() {
+        if (!sideTabBuilt || !sideTabBtn) return;
+        sideTabBtn.classList.remove('idle');
+        clearTimeout(sideTabIdleTimer);
+        // Dim when toolbar is closed and idle so it never obstructs viewing
+        if (!prefs.showToolbar) {
+            sideTabIdleTimer = setTimeout(() => {
+                if (sideTabBtn && !sideTabBtn.matches(':hover')) {
+                    sideTabBtn.classList.add('idle');
+                }
+            }, 3000);
+        }
+    }
+
+    window.addEventListener('mousemove', resetSideTabIdle, { passive: true });
+    window.addEventListener('pointermove', resetSideTabIdle, { passive: true });
+
+    function buildSideTab() {
+        if (sideTabBuilt) return;
+        const body = document.body || document.documentElement;
+        if (!body) return;
+
+        sideTabHost = document.createElement('div');
+        sideTabHost.id = 'mvc-side-tab-host';
+
+        sideTabShadow = sideTabHost.attachShadow({ mode: 'open' });
+
+        const style = document.createElement('style');
+        style.textContent = `
+            :host {
+                all: initial;
+                position: fixed !important;
+                z-index: 2147483646 !important;
+                pointer-events: none !important;
+                display: none;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+            }
+            :host(.visible) {
+                display: block !important;
+            }
+            #mvc-side-dropdown {
+                all: unset;
+                box-sizing: border-box;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 5px 11px;
+                background: rgba(16, 16, 22, 0.84);
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                border-radius: 20px;
+                backdrop-filter: blur(14px);
+                -webkit-backdrop-filter: blur(14px);
+                box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+                color: #e2e2e8;
+                font-size: 11.5px;
+                font-weight: 600;
+                line-height: 1;
+                cursor: pointer;
+                user-select: none;
+                pointer-events: auto;
+                transition: opacity 0.25s ease, transform 0.18s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+                opacity: 0.7;
+            }
+            #mvc-side-dropdown:hover {
+                opacity: 1 !important;
+                background: rgba(24, 24, 34, 0.94);
+                border-color: rgba(76, 154, 255, 0.65);
+                box-shadow: 0 6px 22px rgba(0, 0, 0, 0.6), 0 0 10px rgba(76, 154, 255, 0.25);
+                transform: scale(1.05);
+            }
+            #mvc-side-dropdown:active {
+                transform: scale(0.95);
+            }
+            #mvc-side-dropdown.active {
+                opacity: 1 !important;
+                background: rgba(18, 28, 48, 0.94);
+                border-color: #4c9aff;
+                color: #4c9aff;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 12px rgba(76, 154, 255, 0.4);
+            }
+            #mvc-side-dropdown.idle {
+                opacity: 0.25;
+            }
+            .side-badge {
+                font-size: 12px;
+                line-height: 1;
+            }
+            .side-text {
+                font-size: 11.5px;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+            }
+            .side-arrow {
+                font-size: 11px;
+                line-height: 1;
+                transition: transform 0.25s ease;
+                display: inline-block;
+            }
+            #mvc-side-dropdown.active .side-arrow {
+                transform: rotate(180deg);
+            }
+        `;
+        sideTabShadow.appendChild(style);
+
+        const btn = document.createElement('button');
+        btn.id = 'mvc-side-dropdown';
+        btn.setAttribute('aria-label', 'Toggle VidAmp video controls');
+        btn.title = 'VidAmp Video Controls (Click to toggle, Alt+T)';
+        btn.innerHTML = `
+            <span class="side-badge">⚡</span>
+            <span class="side-text">VidAmp</span>
+            <span class="side-arrow">▾</span>
+        `;
+
+        btn.onclick = e => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            toggleToolbarVisibility();
+        };
+
+        // Drag to reposition anywhere
+        btn.addEventListener('pointerdown', e => {
+            if (e.button !== 0) return;
+            isDraggingSideTab = true;
+            const curLeft = sideTabHost.offsetLeft || 0;
+            const curTop = sideTabHost.offsetTop || 0;
+            sideTabDragStart = {
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                hostX: curLeft,
+                hostY: curTop
+            };
+
+            const onMove = moveEvt => {
+                if (!isDraggingSideTab || !sideTabDragStart) return;
+                const dx = moveEvt.clientX - sideTabDragStart.mouseX;
+                const dy = moveEvt.clientY - sideTabDragStart.mouseY;
+                const newLeft = Math.max(4, Math.min(window.innerWidth - btn.offsetWidth - 4, sideTabDragStart.hostX + dx));
+                const newTop = Math.max(4, Math.min(window.innerHeight - btn.offsetHeight - 4, sideTabDragStart.hostY + dy));
+
+                sideTabCustomPos = { left: newLeft, top: newTop };
+                sideTabHost.style.setProperty('left', `${Math.round(newLeft)}px`, 'important');
+                sideTabHost.style.setProperty('top', `${Math.round(newTop)}px`, 'important');
+            };
+
+            const onUp = () => {
+                isDraggingSideTab = false;
+                sideTabDragStart = null;
+                window.removeEventListener('pointermove', onMove, true);
+                window.removeEventListener('pointerup', onUp, true);
+            };
+
+            window.addEventListener('pointermove', onMove, true);
+            window.addEventListener('pointerup', onUp, true);
+        });
+
+        // Double click to reset position
+        btn.addEventListener('dblclick', () => {
+            sideTabCustomPos = null;
+            positionSideTab();
+            showToast('📍 VidAmp tab reset to default');
+        });
+
+        sideTabShadow.appendChild(btn);
+        sideTabBtn = btn;
+
+        body.appendChild(sideTabHost);
+        sideTabBuilt = true;
+        updateSideTabState();
+        positionSideTab();
+    }
+
+    // Hook toolbar & side tab into resize, scroll, and fullscreen
     let toolbarRepositionRaf = false;
     function scheduleToolbarReposition() {
         if (toolbarRepositionRaf) return;
@@ -4194,10 +4452,18 @@
         requestAnimationFrame(() => {
             toolbarRepositionRaf = false;
             positionToolbar();
+            if (sideTabBuilt) positionSideTab();
         });
     }
 
     window.addEventListener('resize', scheduleToolbarReposition, { passive: true });
+    window.addEventListener('scroll', scheduleToolbarReposition, { passive: true, capture: true });
+    document.addEventListener('fullscreenchange', () => {
+        scheduleToolbarReposition();
+    }, { passive: true });
+    document.addEventListener('webkitfullscreenchange', () => {
+        scheduleToolbarReposition();
+    }, { passive: true });
 
     /* =========================================================
        Playback Rate Controller
