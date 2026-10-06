@@ -113,6 +113,16 @@
         }
     }
 
+    const storeValue = saveValue;
+
+    let speedStorageDebounceTimer = null;
+    function debouncedSaveSpeed(rate) {
+        clearTimeout(speedStorageDebounceTimer);
+        speedStorageDebounceTimer = setTimeout(() => {
+            saveValue(siteKey('speed'), rate);
+        }, 350);
+    }
+
     const siteKey = key => `mvc:${location.hostname.toLowerCase()}:${key}`;
 
     function validSpeed(value) {
@@ -186,8 +196,9 @@
     }
 
     function isUsableVideo(v) {
-        if (!v || !v.isConnected) return false;
+        if (!v || !v.isConnected || !(v instanceof HTMLVideoElement)) return false;
         if (v.videoWidth > 0 || v.videoHeight > 0 || !v.paused) return true;
+        if (v.offsetWidth >= 30 && v.offsetHeight >= 30) return true;
         return isVisible(v);
     }
 
@@ -3145,7 +3156,14 @@
                 clear: both;
                 pointer-events: auto;
             }
-            :host(.mvc-docked-mode) {
+            :host(.mvc-hidden),
+            :host([hidden]) {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
+            :host(.mvc-docked-mode:not(.mvc-hidden):not([hidden])) {
                 position: absolute !important;
                 z-index: 2147483640 !important;
                 pointer-events: none !important;
@@ -3168,7 +3186,7 @@
             :host(.mvc-docked-mode) #mvc-toolbar {
                 pointer-events: auto !important;
             }
-            :host(.mvc-floating-mode) {
+            :host(.mvc-floating-mode:not(.mvc-hidden):not([hidden])) {
                 position: fixed !important;
                 z-index: 2147483645 !important;
                 pointer-events: none !important;
@@ -3529,7 +3547,13 @@
         btnClose.style.opacity = '0.7';
         btnClose.onmouseenter = () => btnClose.style.opacity = '1';
         btnClose.onmouseleave = () => btnClose.style.opacity = '0.7';
-        btnClose.onclick = () => toggleToolbarVisibility(false);
+        btnClose.onclick = e => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            toggleToolbarVisibility(false);
+        };
 
         // Assemble toolbar
         tb.appendChild(btnLoop);
@@ -3866,13 +3890,20 @@
     function toggleToolbarVisibility(forceState) {
         const nextState = typeof forceState === 'boolean' ? forceState : (prefs.showToolbar === false);
         prefs.showToolbar = nextState;
-        storeValue('showToolbar', nextState);
+        saveValue('showToolbar', nextState);
         if (toolbarHost) {
             if (nextState) {
+                toolbarHost.classList.remove('mvc-hidden');
+                toolbarHost.removeAttribute('hidden');
+                toolbarHost.style.removeProperty('display');
+                toolbarHost.style.removeProperty('visibility');
                 mountToolbarInPage();
                 showToast('🎛️ Toolbar visible (Alt+T)');
             } else {
+                toolbarHost.classList.add('mvc-hidden');
+                toolbarHost.setAttribute('hidden', '');
                 toolbarHost.style.setProperty('display', 'none', 'important');
+                toolbarHost.style.setProperty('visibility', 'hidden', 'important');
                 showToast('🎛️ Toolbar hidden (Press Alt+T to restore)');
             }
         }
@@ -3921,8 +3952,11 @@
     function mountToolbarInPage() {
         if (!toolbarBuilt || !toolbarHost) return;
         if (isDraggingToolbar) return;
-        if (prefs.showToolbar === false) {
+        if (prefs.showToolbar === false || toolbarHost.classList.contains('mvc-hidden') || toolbarHost.hasAttribute('hidden')) {
+            toolbarHost.classList.add('mvc-hidden');
+            toolbarHost.setAttribute('hidden', '');
             toolbarHost.style.setProperty('display', 'none', 'important');
+            toolbarHost.style.setProperty('visibility', 'hidden', 'important');
             return;
         }
 
@@ -4065,7 +4099,7 @@
     if (isYouTubePage()) {
         let ytMountScheduled = false;
         function tryMountYouTubeToolbar() {
-            if (!toolbarBuilt || !toolbarHost || Boolean(document.fullscreenElement)) return;
+            if (!toolbarBuilt || !toolbarHost || Boolean(document.fullscreenElement) || prefs.showToolbar === false || toolbarHost.classList.contains('mvc-hidden')) return;
             const watchMetadata = document.querySelector('ytd-watch-metadata') || document.querySelector('#below');
             if (watchMetadata && (!toolbarHost.isConnected || toolbarHost.nextSibling !== watchMetadata)) {
                 if (ytMountScheduled) return;
@@ -4153,7 +4187,7 @@
         temporaryBoostOriginalSpeed = null;
         clearTimeout(temporaryBoostRestoreTimer);
         temporaryBoostRestoreTimer = null;
-        saveValue(siteKey('speed'), rate);
+        debouncedSaveSpeed(rate);
         syncExtraSpeedSelect();
 
         if (notify) showToast(formatSpeed(rate));
@@ -4388,15 +4422,70 @@
         }
     }
 
-    function showToast(message) {
-        if (!panelBuilt || !toastEl) return;
-        toastEl.textContent = String(message);
-        toastEl.classList.add('visible');
+    let videoHudEl = null;
+    let videoHudTimer = null;
 
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => {
-            toastEl.classList.remove('visible');
-        }, 900);
+    function showVideoHud(message) {
+        if (!message) return;
+        if (!videoHudEl) {
+            videoHudEl = document.createElement('div');
+            videoHudEl.id = 'mvc-video-hud';
+            videoHudEl.style.cssText = [
+                'position: fixed !important',
+                'z-index: 2147483647 !important',
+                'top: 48px !important',
+                'left: 50% !important',
+                'transform: translateX(-50%) translateY(-6px) !important',
+                'background: rgba(15, 18, 25, 0.94) !important',
+                'color: #ffffff !important',
+                'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
+                'font-size: 14px !important',
+                'font-weight: 700 !important',
+                'padding: 7px 18px !important',
+                'border-radius: 9999px !important',
+                'border: 1px solid rgba(148, 163, 184, 0.3) !important',
+                'box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6) !important',
+                'pointer-events: none !important',
+                'user-select: none !important',
+                'opacity: 0 !important',
+                'transition: opacity 0.16s ease, transform 0.16s ease !important',
+                'display: flex !important',
+                'align-items: center !important',
+                'gap: 7px !important',
+                'backdrop-filter: blur(12px) !important',
+                '-webkit-backdrop-filter: blur(12px) !important'
+            ].join(';');
+        }
+
+        const targetParent = document.fullscreenElement || document.webkitFullscreenElement || document.body || document.documentElement;
+        if (targetParent && videoHudEl.parentNode !== targetParent) {
+            try { targetParent.appendChild(videoHudEl); } catch (_) {}
+        }
+
+        videoHudEl.textContent = String(message);
+        videoHudEl.style.setProperty('opacity', '1', 'important');
+        videoHudEl.style.setProperty('transform', 'translateX(-50%) translateY(0)', 'important');
+
+        clearTimeout(videoHudTimer);
+        videoHudTimer = setTimeout(() => {
+            if (videoHudEl) {
+                videoHudEl.style.setProperty('opacity', '0', 'important');
+                videoHudEl.style.setProperty('transform', 'translateX(-50%) translateY(-6px)', 'important');
+            }
+        }, 850);
+    }
+
+    function showToast(message) {
+        showVideoHud(message);
+        if (panelBuilt && toastEl) {
+            toastEl.textContent = String(message);
+            toastEl.classList.add('visible');
+
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                toastEl.classList.remove('visible');
+            }, 900);
+        }
     }
 
     /* =========================================================
@@ -4735,18 +4824,72 @@
     function findVideoAtPoint(x, y) {
         let el = null;
         try { el = document.elementFromPoint(x, y); } catch (_) {}
-        if (!el) return null;
-        if (el instanceof HTMLVideoElement && isUsableVideo(el)) return el;
-        try {
-            const closestVideo = el.closest ? el.closest('video') : null;
-            if (closestVideo && isUsableVideo(closestVideo)) return closestVideo;
-        } catch (_) {}
 
-        for (const candidate of videos) {
+        if (el) {
+            // 1. Direct video hit
+            if (el instanceof HTMLVideoElement && isUsableVideo(el)) return el;
+
+            // 2. Ancestor lookup
+            try {
+                const closestVideo = el.closest ? el.closest('video') : null;
+                if (closestVideo && isUsableVideo(closestVideo)) return closestVideo;
+            } catch (_) {}
+
+            // 3. Child lookup within the hit element
+            try {
+                if (el.querySelector) {
+                    const childVideo = el.querySelector('video');
+                    if (childVideo && isUsableVideo(childVideo)) return childVideo;
+                }
+            } catch (_) {}
+
+            // 4. Common web video player containers (YouTube, Hotstar, JioCinema, Netflix, Prime, Video.js, etc.)
+            try {
+                const playerContainer = el.closest ? el.closest('.html5-video-player, #movie_player, .video-js, [class*="player"], [id*="player"], [class*="video-container"], .shaka-video-container, .bmpui-ui-uicontainer, [data-player]') : null;
+                if (playerContainer) {
+                    const wrapVideo = playerContainer.querySelector('video');
+                    if (wrapVideo && isUsableVideo(wrapVideo)) return wrapVideo;
+                }
+            } catch (_) {}
+
+            // 5. Penetrate Shadow DOM
+            let curr = el;
+            while (curr && curr.shadowRoot && curr.shadowRoot.elementFromPoint) {
+                const inner = curr.shadowRoot.elementFromPoint(x, y);
+                if (!inner || inner === curr) break;
+                curr = inner;
+                if (curr instanceof HTMLVideoElement && isUsableVideo(curr)) return curr;
+                if (curr.querySelector) {
+                    const shadowVideo = curr.querySelector('video');
+                    if (shadowVideo && isUsableVideo(shadowVideo)) return shadowVideo;
+                }
+            }
+        }
+
+        // 6. Active video check (if cursor is within bounds of current video or its player)
+        const cur = getVideo();
+        if (cur && isUsableVideo(cur)) {
+            const playerEl = findFullscreenTarget(cur) || cur.parentElement || cur;
+            const r = playerEl.getBoundingClientRect();
+            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+                return cur;
+            }
+        }
+
+        // 7. Check all tracked videos and any video elements on the page
+        const pool = (videos && videos.length > 0) ? videos : queryVideos(document);
+        for (const candidate of pool) {
             if (!isUsableVideo(candidate)) continue;
             const rect = candidate.getBoundingClientRect();
             if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
                 return candidate;
+            }
+            const p = candidate.parentElement;
+            if (p) {
+                const pr = p.getBoundingClientRect();
+                if (x >= pr.left && x <= pr.right && y >= pr.top && y <= pr.bottom) {
+                    return candidate;
+                }
             }
         }
         return null;
@@ -5250,29 +5393,41 @@
         trackpadGestureIdleTimer = null;
     }
 
-    function handleSpeedWheelStep(target, travel) {
-        if (!target || !target.isConnected || Math.abs(travel) < 4) return;
+    let wheelLastRateTime = 0;
+
+    function handleSpeedWheelStep(target, travel, isDiscreteNotch = false) {
+        if (!target || !target.isConnected) return;
+
+        let steps = 0;
+        if (isDiscreteNotch) {
+            steps = Math.sign(travel);
+        } else {
+            accumulatedWheelDelta += travel;
+            clearTimeout(wheelIdleTimer);
+            wheelIdleTimer = setTimeout(() => {
+                accumulatedWheelDelta = 0;
+            }, 180);
+
+            const STEP_PX = 32;
+            if (Math.abs(accumulatedWheelDelta) >= STEP_PX) {
+                steps = Math.sign(accumulatedWheelDelta);
+                accumulatedWheelDelta = Math.sign(accumulatedWheelDelta) * (Math.abs(accumulatedWheelDelta) - STEP_PX) * 0.35;
+            }
+        }
+
+        if (steps === 0) return;
+
+        const now = performance.now();
+        if (now - wheelLastRateTime < 35) return;
+        wheelLastRateTime = now;
 
         const currentRate = Number(target.playbackRate) || (prefs.speed || 1);
-        const dir = Math.sign(travel);
-        const now = performance.now();
-        wheelGestureStreak = now - wheelGestureLastAt < 160
-            ? Math.min(wheelGestureStreak + 1, 8)
-            : 1;
-        wheelGestureLastAt = now;
-
-        // Exponential acceleration (Enhancer for YouTube style):
-        // Small gentle movement = precise 0.05x / 0.10x adjustments
-        // Rapid continuous movement = exponential acceleration up to 2x / 3x / 4x
         const baseStep = 0.05;
-        const acceleration = Math.pow(1.18, wheelGestureStreak);
-        const change = Math.min(0.5, baseStep * acceleration);
-
-        let nextRate = currentRate + dir * change;
+        let nextRate = currentRate + steps * baseStep;
         nextRate = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(nextRate * 20) / 20));
         nextRate = Number(nextRate.toFixed(2));
 
-        if (nextRate !== currentRate) {
+        if (Math.abs(nextRate - currentRate) > 0.001) {
             setPlaybackRate(target, nextRate, true);
             if (toolbarBuilt) syncToolbar();
         }
@@ -5281,75 +5436,8 @@
     document.addEventListener('wheel', e => {
         if (eventIsInsideController(e)) return;
 
-        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
-        const target = findVideoAtPoint(e.clientX, e.clientY);
-        const isOverVideo = Boolean(target && !isOverPlayerControl(e));
-
-        // 1. Laptop Touchpad Pinch Gesture (ctrlKey + wheel) over video player:
-        // Dedicated touchpad gesture for exponential speed control (never interferes with page scrolling!)
-        if (e.ctrlKey && isOverVideo && prefs.trackpadSpeedEnabled) {
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-
-            const dir = prefs.gestureReverse ? 1 : -1;
-            const delta = -e.deltaY * dir;
-            handleSpeedWheelStep(target, delta);
-            return;
-        }
-
-        // 2. Modifier Key Two-Finger Gesture over video player:
-        // Alt + Scroll = Speed control with exponential acceleration
-        // Shift + Scroll = Volume control
-        if ((e.altKey || e.shiftKey) && isOverVideo) {
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-
-            const dir = prefs.gestureReverse ? -1 : 1;
-            const delta = -e.deltaY * dir;
-
-            if (e.shiftKey) {
-                const volDelta = delta > 0 ? 0.05 : -0.05;
-                const nextVol = Math.round((prefs.volume + volDelta) * 100) / 100;
-                applyVolumeAndBoost(target, nextVol, true);
-            } else {
-                handleSpeedWheelStep(target, delta);
-            }
-            return;
-        }
-
-        // 3. Horizontal Two-Finger Swipe over video player:
-        // Left/Right swipe controls speed without hijacking vertical page scrolling
-        if (isOverVideo && prefs.trackpadSpeedEnabled && Math.abs(e.deltaX) > Math.abs(e.deltaY) + 6) {
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-
-            const dir = prefs.gestureReverse ? -1 : 1;
-            const delta = e.deltaX * dir;
-            handleSpeedWheelStep(target, delta);
-            return;
-        }
-
-        // 4. In Fullscreen Mode:
-        // In fullscreen mode the page cannot scroll, so vertical two-finger scroll directly controls playback speed
-        if (isFullscreen && isOverVideo && prefs.trackpadSpeedEnabled) {
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-
-            const dir = prefs.gestureReverse ? -1 : 1;
-            handleSpeedWheelStep(target, -e.deltaY * dir);
-            return;
-        }
-
-        // 5. Wheel over Toolbar Speed Button:
-        const overSpeedBtn = e.target && e.target.closest && e.target.closest('#tb-speed, .tb-speed-btn, #tb-speed-val');
+        // 1. Wheel over Toolbar Speed Button or popover
+        const overSpeedBtn = e.target && e.target.closest && e.target.closest('#tb-speed, .tb-speed-btn, #tb-speed-val, #mvc-speed-popover');
         if (overSpeedBtn) {
             const v = getVideo();
             if (v) {
@@ -5357,9 +5445,76 @@
                     try { e.preventDefault(); } catch (_) {}
                 }
                 const dir = prefs.gestureReverse ? -1 : 1;
-                handleSpeedWheelStep(v, -e.deltaY * dir);
+                const isDiscrete = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 80;
+                handleSpeedWheelStep(v, -e.deltaY * dir, isDiscrete);
                 return;
             }
+        }
+
+        const target = findVideoAtPoint(e.clientX, e.clientY);
+        const isOverVideo = Boolean(target && !isOverPlayerControl(e));
+        if (!isOverVideo) return;
+
+        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        const dir = prefs.gestureReverse ? -1 : 1;
+        const isDiscrete = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 80;
+
+        // 2. Laptop Touchpad Pinch Gesture (ctrlKey + wheel) over video player:
+        // Dedicated touchpad gesture for exponential speed control (never interferes with page scrolling!)
+        if (e.ctrlKey && prefs.trackpadSpeedEnabled) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+
+            const pinchDir = prefs.gestureReverse ? 1 : -1;
+            handleSpeedWheelStep(target, -e.deltaY * pinchDir, false);
+            return;
+        }
+
+        // 3. Modifier Key Two-Finger Gesture over video player:
+        // Alt + Scroll = Speed control
+        // Shift + Scroll = Volume control
+        if (e.altKey || e.shiftKey) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+
+            if (e.shiftKey) {
+                const volDelta = (-e.deltaY * dir) > 0 ? 0.05 : -0.05;
+                const nextVol = Math.round((prefs.volume + volDelta) * 100) / 100;
+                applyVolumeAndBoost(target, nextVol, true);
+            } else {
+                handleSpeedWheelStep(target, -e.deltaY * dir, isDiscrete);
+            }
+            return;
+        }
+
+        // 4. Horizontal Two-Finger Swipe over video player:
+        // Left/Right swipe controls speed without hijacking vertical page scrolling
+        if (prefs.trackpadSpeedEnabled && Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && Math.abs(e.deltaX) > 6) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+
+            const dir = prefs.gestureReverse ? -1 : 1;
+            const delta = e.deltaX * dir;
+            handleSpeedWheelStep(target, delta, false);
+            return;
+        }
+
+        // 5. In Fullscreen Mode:
+        // In fullscreen mode the page cannot scroll, so vertical two-finger scroll directly controls playback speed
+        if (isFullscreen && prefs.trackpadSpeedEnabled) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+
+            handleSpeedWheelStep(target, -e.deltaY * dir, isDiscrete);
+            return;
         }
 
         // In normal page view: Plain two-finger vertical scrolling is NEVER hijacked!
@@ -5783,9 +5938,16 @@
                     prefs.showToolbar = change.newValue !== false;
                     if (toolbarHost) {
                         if (prefs.showToolbar) {
+                            toolbarHost.classList.remove('mvc-hidden');
+                            toolbarHost.removeAttribute('hidden');
+                            toolbarHost.style.removeProperty('display');
+                            toolbarHost.style.removeProperty('visibility');
                             mountToolbarInPage();
                         } else {
+                            toolbarHost.classList.add('mvc-hidden');
+                            toolbarHost.setAttribute('hidden', '');
                             toolbarHost.style.setProperty('display', 'none', 'important');
+                            toolbarHost.style.setProperty('visibility', 'hidden', 'important');
                         }
                     }
                 } else if (key === 'trackpadSpeedEnabled') {
