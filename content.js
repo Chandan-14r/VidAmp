@@ -386,6 +386,10 @@
     let trackpadGestureIdleTimer = null;
     let accumulatedWheelDelta = 0;
     let wheelIdleTimer = null;
+    let wheelGestureRaf = null;
+    let wheelGestureTarget = null;
+    let wheelGestureLastAt = 0;
+    let wheelGestureStreak = 0;
 
     let fullscreenFallback = null;
     let hostOriginalParent = null;
@@ -671,43 +675,44 @@
     function isLiveVideo(v) {
         if (!v) return false;
 
-        // 1. YouTube specialized live stream check
+        // 1. Any video with a valid, finite duration (> 0 and < 1,000,000s) is a standard recorded VOD (YouTube videos, movies, TV shows).
+        // Standard recorded media is NEVER a live stream and must have full, unrestricted speed control!
+        if (Number.isFinite(v.duration) && v.duration > 0 && v.duration < 1000000) {
+            return false;
+        }
+
+        // 2. YouTube specialized live stream check
         if (isYouTubePage()) {
-            const liveBadge = document.querySelector('.ytp-live-badge') || document.querySelector('.ytp-live');
-            if (liveBadge) return true;
             const moviePlayer = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-            if (moviePlayer) {
+            if (moviePlayer && typeof moviePlayer.getVideoData === 'function') {
                 try {
-                    if (typeof moviePlayer.getVideoData === 'function' && moviePlayer.getVideoData()?.isLive) return true;
-                    if (typeof moviePlayer.getPlayerResponse === 'function' && moviePlayer.getPlayerResponse()?.videoDetails?.isLiveContent) return true;
+                    if (moviePlayer.getVideoData()?.isLive === true) return true;
                 } catch (_) {}
+            }
+            const liveBadge = document.querySelector('.ytp-live-badge');
+            if (liveBadge && !liveBadge.hasAttribute('disabled') && liveBadge.offsetWidth > 0 && (liveBadge.textContent || '').toUpperCase().includes('LIVE')) {
+                return true;
             }
         }
 
-        // 2. Generic HTML5 media live stream checks (Hotstar, JioCinema, Twitch, HLS, DASH)
-        if (!Number.isFinite(v.duration) || v.duration === Infinity) return true;
+        // 3. True live streams have infinite or non-finite duration
+        if (v.duration === Infinity) return true;
 
-        // Moving seekable DVR window typical of live streams
+        // 4. Moving seekable DVR window (only when duration is not a normal finite length)
         if (v.seekable && v.seekable.length > 0) {
             try {
                 const start = v.seekable.start(0);
-                const end = v.seekable.end(v.seekable.length - 1);
-                if (start > 10 || (v.duration > 0 && Math.abs(v.duration - end) < 1.0 && end > 60)) {
+                if (start > 30 && (!Number.isFinite(v.duration) || v.duration === Infinity)) {
                     return true;
                 }
             } catch (_) {}
-        }
-
-        // Site badges / indicators
-        if (document.querySelector('.live-tag, .live-badge, [class*="live-indicator" i], [class*="badge-live" i], [aria-label*="live" i]')) {
-            return true;
         }
 
         return false;
     }
 
     function getLiveDelay(v) {
-        if (!v) return null;
+        if (!v || !isLiveVideo(v)) return null;
 
         // YouTube live stream delay
         if (isYouTubePage()) {
@@ -736,16 +741,6 @@
             } catch (_) {}
         }
 
-        // Buffer edge check
-        if (v.buffered && v.buffered.length > 0) {
-            try {
-                const bufEnd = v.buffered.end(v.buffered.length - 1);
-                if (Number.isFinite(bufEnd)) {
-                    return Math.max(0, bufEnd - v.currentTime);
-                }
-            } catch (_) {}
-        }
-
         if (v.duration === Infinity) return 0;
 
         return null;
@@ -755,6 +750,8 @@
         if (!v || v.paused) return;
         if (Number(v.playbackRate) <= 1.0) return; // Only monitor if user is running faster than 1x to catch up
 
+        // Fast bail-out for recorded videos (YouTube, movies, etc.)
+        if (Number.isFinite(v.duration) && v.duration > 0 && v.duration < 1000000) return;
         if (!isLiveVideo(v)) return;
 
         const delay = getLiveDelay(v);
@@ -1920,15 +1917,15 @@
                     overflow-y: auto;
                     overscroll-behavior: contain;
 
-                    background: linear-gradient(155deg, rgba(16, 18, 28, 0.95) 0%, rgba(10, 11, 18, 0.98) 100%);
+                    background: rgba(14, 17, 23, 0.98);
                     color: #f8fafc;
                     border: 1px solid rgba(255, 255, 255, 0.12);
-                    border-radius: 22px;
+                    border-radius: 12px;
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
                     font-size: 12px;
-                    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.06), 0 0 35px rgba(56, 189, 248, 0.12);
-                    backdrop-filter: blur(30px) saturate(200%);
-                    -webkit-backdrop-filter: blur(30px);
+                    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.68), 0 0 0 1px rgba(255, 255, 255, 0.05);
+                    backdrop-filter: blur(24px) saturate(145%);
+                    -webkit-backdrop-filter: blur(24px);
 
                     opacity: 0;
                     transform: translateY(14px) scale(.97);
@@ -1972,9 +1969,7 @@
                     font-weight: 800;
                     letter-spacing: 0.07em;
                     text-transform: uppercase;
-                    background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
+                    color: #7dd3fc;
                 }
 
                 #title-actions {
@@ -2048,7 +2043,7 @@
                     top: 0;
                     bottom: 0;
                     width: 0%;
-                    background: linear-gradient(90deg, #38bdf8, #6366f1, #a855f7);
+                    background: #38bdf8;
                     border-radius: 5px;
                     pointer-events: none;
                     box-shadow: 0 0 10px rgba(56, 189, 248, 0.55);
@@ -2113,7 +2108,7 @@
                 #play {
                     flex: 1.25;
                     height: 36px;
-                    background: linear-gradient(135deg, #0284c7, #4f46e5);
+                    background: #0284c7;
                     border: 1px solid rgba(255, 255, 255, 0.2);
                     border-radius: 10px;
                     color: #ffffff;
@@ -2126,7 +2121,7 @@
                     transition: all .14s ease;
                 }
                 #play:hover {
-                    background: linear-gradient(135deg, #0369a1, #4338ca);
+                    background: #0369a1;
                     box-shadow: 0 6px 18px rgba(2, 132, 199, 0.6);
                     transform: translateY(-1px);
                 }
@@ -2160,7 +2155,7 @@
                     color: #fff;
                 }
                 .speed-bar button.active {
-                    background: linear-gradient(135deg, #0284c7, #38bdf8);
+                    background: #0284c7;
                     color: #ffffff;
                     box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
                 }
@@ -2480,7 +2475,7 @@
                     </div>
                     <div class="grid-2">
                         <button id="pip" class="hud-btn" type="button" title="Picture-in-Picture (P)">🖼️ PiP</button>
-                        <button id="fullscreen" class="hud-btn" type="button" title="Fullscreen (F)">⛶ Fullscreen</button>
+                        <button id="fullscreen" class="hud-btn" type="button" title="Fullscreen (F)" aria-label="Enter fullscreen">⛶ Fullscreen</button>
                     </div>
                 </div>
 
@@ -3206,18 +3201,22 @@
                 margin: 0;
                 box-sizing: border-box;
                 pointer-events: none;
+                max-width: calc(100vw - 16px);
+                overflow-x: auto;
+                scrollbar-width: none;
             }
+            #mvc-toolbar-container::-webkit-scrollbar { display: none; }
             #mvc-toolbar {
                 display: inline-flex;
                 align-items: center;
                 gap: 2px;
-                height: 32px;
+                height: 36px;
                 box-sizing: border-box;
-                padding: 2px 6px;
-                background: rgba(18, 19, 24, 0.94);
-                border: 1px solid rgba(255, 255, 255, 0.12);
+                padding: 3px 7px;
+                background: rgba(14, 17, 23, 0.96);
+                border: 1px solid rgba(148, 163, 184, 0.24);
                 border-radius: 8px;
-                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
                 user-select: none;
                 backdrop-filter: blur(16px);
                 -webkit-backdrop-filter: blur(16px);
@@ -3259,6 +3258,10 @@
             }
             .tb-btn:active {
                 transform: scale(0.92);
+            }
+            .tb-btn:focus-visible, .tb-speed-btn:focus-visible {
+                outline: 2px solid #38bdf8;
+                outline-offset: 2px;
             }
             .tb-btn.active {
                 color: #38bdf8;
@@ -3312,7 +3315,7 @@
                 font-weight: 700;
                 color: #ffffff;
                 cursor: pointer;
-                border-radius: 6px;
+                border-radius: 5px;
                 background: rgba(255, 255, 255, 0.08);
                 border: 1px solid rgba(255, 255, 255, 0.14);
                 transition: background 0.12s ease, border-color 0.12s ease;
@@ -3459,6 +3462,7 @@
         // Icons matching Enhancer for YouTube + Professional Suite
         const ICONS = {
             loop:        icon('<path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>'),
+            fullscreen:  icon('<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/>'),
             volumeBoost: icon('<path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/><path d="M13 2l2 4-3 1 3 5" fill="none" stroke="currentColor" stroke-width="2"/>'),
             bass:        icon('<path d="M4 10v4M8 6v12M12 2v20M16 6v12M20 10v4"/>'),
             cinema:      icon('<rect x="2" y="4" width="20" height="16" rx="3"/><circle cx="12" cy="12" r="3"/><path d="M3 7h2M19 7h2M3 17h2M19 17h2"/>'),
@@ -3503,6 +3507,7 @@
         const btnTheater    = btn('theater', 'theater', 'Theater Mode / Resize Player');
         const btnPip        = btn('pip', 'pip', 'Picture-in-Picture (Detach Player)');
         const btnAspect     = btn('aspect', 'aspect', 'Aspect Ratio (Crop 21:9 / Stretch / Fit)');
+        const btnFullscreen = btn('fullscreen', 'fullscreen', 'Enter fullscreen (F)');
         
         // Speed pill button
         const btnSpeed = document.createElement('button');
@@ -3536,6 +3541,7 @@
         tb.appendChild(btnTheater);
         tb.appendChild(btnPip);
         tb.appendChild(btnAspect);
+        tb.appendChild(btnFullscreen);
         tb.appendChild(sep());
         tb.appendChild(btnSpeed);
         tb.appendChild(btnFilters);
@@ -3653,6 +3659,7 @@
         btnTheater.onclick = () => toggleWebTheater();
         btnPip.onclick = () => togglePiP();
         btnAspect.onclick = () => cycleAspectRatio();
+        btnFullscreen.onclick = () => toggleFullscreen();
 
         btnSpeed.onclick = e => {
             e.stopPropagation();
@@ -3871,6 +3878,24 @@
         }
     }
 
+    function setFullscreenUi(active) {
+        clearTimeout(toolbarIdleTimer);
+        if (toolbarHost) {
+            if (active) {
+                toolbarHost.style.setProperty('display', 'none', 'important');
+            } else if (prefs.showToolbar !== false) {
+                requestAnimationFrame(() => mountToolbarInPage());
+            }
+        }
+
+        if (fullscreenBtn) {
+            const label = active ? 'Exit fullscreen' : 'Enter fullscreen';
+            fullscreenBtn.title = `${label} (F)`;
+            fullscreenBtn.setAttribute('aria-label', label);
+            fullscreenBtn.textContent = active ? '⛶ Exit Fullscreen' : '⛶ Fullscreen';
+        }
+    }
+
     let toolbarIdleTimer = null;
     function resetToolbarIdle() {
         if (!toolbarBuilt || !tbShadow) return;
@@ -4039,14 +4064,10 @@
 
     if (isYouTubePage()) {
         let ytMountScheduled = false;
-        const ytToolbarObserver = new MutationObserver(() => {
+        function tryMountYouTubeToolbar() {
             if (!toolbarBuilt || !toolbarHost || Boolean(document.fullscreenElement)) return;
             const watchMetadata = document.querySelector('ytd-watch-metadata') || document.querySelector('#below');
-            const needsMount = watchMetadata
-                ? (!toolbarHost.isConnected || toolbarHost.nextSibling !== watchMetadata)
-                : !toolbarHost.isConnected;
-
-            if (needsMount) {
+            if (watchMetadata && (!toolbarHost.isConnected || toolbarHost.nextSibling !== watchMetadata)) {
                 if (ytMountScheduled) return;
                 ytMountScheduled = true;
                 requestAnimationFrame(() => {
@@ -4054,10 +4075,15 @@
                     mountToolbarInPage();
                 });
             }
+        }
+
+        // Lightweight hooks on navigation and player updates instead of scanning entire DOM tree
+        ['yt-navigate-finish', 'yt-page-data-updated', 'spfdone'].forEach(evt => {
+            document.addEventListener(evt, () => {
+                setTimeout(tryMountYouTubeToolbar, 150);
+                setTimeout(tryMountYouTubeToolbar, 600);
+            }, { passive: true });
         });
-        try {
-            ytToolbarObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
-        } catch (_) {}
     }
 
     // Cinema Mode: dims everything except the video
@@ -4080,7 +4106,7 @@
         syncToolbar();
     }
 
-    // Hook toolbar into resize and scroll so floating overlay tracks the video smoothly
+    // Hook toolbar into resize and fullscreen (docked mode is position: absolute so page scroll is handled 100% natively by GPU compositor)
     let toolbarRepositionRaf = false;
     function scheduleToolbarReposition() {
         if (toolbarRepositionRaf) return;
@@ -4091,7 +4117,6 @@
         });
     }
 
-    window.addEventListener('scroll', scheduleToolbarReposition, { passive: true, capture: true });
     window.addEventListener('resize', scheduleToolbarReposition, { passive: true });
 
     /* =========================================================
@@ -4501,6 +4526,15 @@
                 return;
             }
 
+            // The extension toolbar is useful beside a player, but must not survive inside it.
+            // Hide it before asking a site's native player to enter fullscreen so there is no flash.
+            setFullscreenUi(true);
+            setTimeout(() => {
+                if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                    setFullscreenUi(false);
+                }
+            }, 800);
+
             // 1. YouTube native fullscreen button
             if (isYouTubePage()) {
                 const ytFsBtn = document.querySelector('button.ytp-fullscreen-button');
@@ -4537,6 +4571,7 @@
                 await v.webkitRequestFullscreen();
             }
         } catch (_) {
+            setFullscreenUi(false);
             showToast('Fullscreen unavailable');
         }
     }
@@ -4568,6 +4603,7 @@
     document.addEventListener('fullscreenchange', () => {
         if (document.fullscreenElement) {
             const fs = document.fullscreenElement;
+            setFullscreenUi(true);
             if (panelBuilt && fs) moveHostTo(fs);
             requestAnimationFrame(() => {
                 if (panelBuilt) positionPanelSmartly(true, lastPointer);
@@ -4577,12 +4613,17 @@
 
         cleanupFallbackFullscreen();
         restoreHost();
+        setFullscreenUi(false);
         if (panelBuilt) {
             updateDockButton();
             requestAnimationFrame(() => {
                 positionPanelSmartly(true, lastPointer);
             });
         }
+    });
+
+    document.addEventListener('webkitfullscreenchange', () => {
+        setFullscreenUi(Boolean(document.webkitFullscreenElement));
     });
 
     /* =========================================================
@@ -4780,9 +4821,11 @@
         const threshold = DEFAULT_GESTURE_THRESHOLD;
         const travel = rawDelta - Math.sign(rawDelta) * threshold;
         const sensitivity = prefs.gestureSensitivity || DEFAULT_GESTURE_SENSITIVITY;
-        const steps = travel / sensitivity;
-        const rawRate = gestureBaseRate + steps * SPEED_INCREMENT;
-        const snapped = Math.round(rawRate / SPEED_INCREMENT) * SPEED_INCREMENT;
+        // A gentle curve makes small corrections precise while longer two-finger moves
+        // gain momentum without jumping in the old 0.25x blocks.
+        const normalizedTravel = Math.sign(travel) * Math.pow(Math.abs(travel) / sensitivity, 0.86);
+        const rawRate = gestureBaseRate + normalizedTravel * 0.10;
+        const snapped = Math.round(rawRate * 20) / 20;
         const clamped = Math.max(MIN_SPEED, Math.min(MAX_SPEED, snapped));
 
         if (Math.abs(Number(gestureVideo.playbackRate) - clamped) > 0.001) {
@@ -5198,115 +5241,129 @@
         accumulatedPinchDelta = 0;
         lastTrackpadGestureTime = 0;
         trackpadGestureStreak = 0;
+        wheelGestureTarget = null;
+        wheelGestureStreak = 0;
+        wheelGestureLastAt = 0;
         clearTimeout(trackpadPinchTimer);
         trackpadPinchTimer = null;
         clearTimeout(trackpadGestureIdleTimer);
         trackpadGestureIdleTimer = null;
     }
 
+    function handleSpeedWheelStep(target, travel) {
+        if (!target || !target.isConnected || Math.abs(travel) < 4) return;
+
+        const currentRate = Number(target.playbackRate) || (prefs.speed || 1);
+        const dir = Math.sign(travel);
+        const now = performance.now();
+        wheelGestureStreak = now - wheelGestureLastAt < 160
+            ? Math.min(wheelGestureStreak + 1, 8)
+            : 1;
+        wheelGestureLastAt = now;
+
+        // Exponential acceleration (Enhancer for YouTube style):
+        // Small gentle movement = precise 0.05x / 0.10x adjustments
+        // Rapid continuous movement = exponential acceleration up to 2x / 3x / 4x
+        const baseStep = 0.05;
+        const acceleration = Math.pow(1.18, wheelGestureStreak);
+        const change = Math.min(0.5, baseStep * acceleration);
+
+        let nextRate = currentRate + dir * change;
+        nextRate = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(nextRate * 20) / 20));
+        nextRate = Number(nextRate.toFixed(2));
+
+        if (nextRate !== currentRate) {
+            setPlaybackRate(target, nextRate, true);
+            if (toolbarBuilt) syncToolbar();
+        }
+    }
+
     document.addEventListener('wheel', e => {
         if (eventIsInsideController(e)) return;
 
-        // 1. Two-Finger Touchpad & Mouse Wheel Playback Speed Gesture (Enhancer for YouTube style)
-        // Over the video player, scrolling with two fingers on laptop touchpad or mouse wheel
-        // smoothly and predictably controls playback speed!
-        if (!e.altKey && !e.shiftKey) {
-            if (!prefs.trackpadSpeedEnabled) return;
+        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        const target = findVideoAtPoint(e.clientX, e.clientY);
+        const isOverVideo = Boolean(target && !isOverPlayerControl(e));
 
-            // CRITICAL: ONLY target when the mouse cursor is DIRECTLY inside the video player bounding rect!
-            // When mouse is anywhere on the page (comments, title, recommendations, blank space),
-            // NEVER hijack scrolling - let the browser scroll the page upward/downward naturally!
-            const target = findVideoAtPoint(e.clientX, e.clientY);
-            if (!target || isOverPlayerControl(e)) return;
-
-            // Only prevent page scroll when mouse is actually on top of the active video player
+        // 1. Laptop Touchpad Pinch Gesture (ctrlKey + wheel) over video player:
+        // Dedicated touchpad gesture for exponential speed control (never interferes with page scrolling!)
+        if (e.ctrlKey && isOverVideo && prefs.trackpadSpeedEnabled) {
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
             try { e.stopPropagation(); } catch (_) {}
 
-            // Normalize delta across browsers and devices
-            let delta = e.deltaY;
-            if (e.deltaMode === 1) delta *= 33;      // Line mode
-            else if (e.deltaMode === 2) delta *= 100; // Page mode
+            const dir = prefs.gestureReverse ? 1 : -1;
+            const delta = -e.deltaY * dir;
+            handleSpeedWheelStep(target, delta);
+            return;
+        }
+
+        // 2. Modifier Key Two-Finger Gesture over video player:
+        // Alt + Scroll = Speed control with exponential acceleration
+        // Shift + Scroll = Volume control
+        if ((e.altKey || e.shiftKey) && isOverVideo) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
 
             const dir = prefs.gestureReverse ? -1 : 1;
-            accumulatedWheelDelta += (-delta * dir);
+            const delta = -e.deltaY * dir;
 
-            clearTimeout(wheelIdleTimer);
-            wheelIdleTimer = setTimeout(() => {
-                accumulatedWheelDelta = 0;
-            }, 180);
-
-            // Responsive 55px threshold: calibrated for touchpad two-finger swipes and mouse wheel notches
-            const WHEEL_STEP_THRESHOLD = 55;
-            if (Math.abs(accumulatedWheelDelta) >= WHEEL_STEP_THRESHOLD) {
-                const stepUp = accumulatedWheelDelta > 0;
-                // Consume threshold and dampen remainder to prevent runaway inertia
-                accumulatedWheelDelta = stepUp
-                    ? Math.max(0, accumulatedWheelDelta - WHEEL_STEP_THRESHOLD) * 0.4
-                    : Math.min(0, accumulatedWheelDelta + WHEEL_STEP_THRESHOLD) * 0.4;
-
-                const curRate = Number(target.playbackRate) || 1;
-
-                // Step sizes:
-                // Normal viewing range (0.25x - 2.0x): 0.05x precision steps (Enhancer for YouTube standard)
-                // Fast range (2.0x - 4.0x): 0.10x steps
-                // Extreme range (> 4.0x): 0.25x steps
-                let stepAmount = 0.05;
-                if (curRate >= 4.0) stepAmount = 0.25;
-                else if (curRate >= 2.0) stepAmount = 0.10;
-
-                let nextRate = stepUp ? curRate + stepAmount : curRate - stepAmount;
-                nextRate = Math.round(nextRate * 20) / 20; // Clean 0.05x increments (e.g. 1.05, 1.10, 1.25, 1.40)
-                nextRate = Number(Math.min(MAX_SPEED, Math.max(MIN_SPEED, nextRate)).toFixed(2));
-
-                if (nextRate !== curRate) {
-                    setPlaybackRate(target, nextRate, true);
-                    if (toolbarBuilt) syncToolbar();
-                }
+            if (e.shiftKey) {
+                const volDelta = delta > 0 ? 0.05 : -0.05;
+                const nextVol = Math.round((prefs.volume + volDelta) * 100) / 100;
+                applyVolumeAndBoost(target, nextVol, true);
+            } else {
+                handleSpeedWheelStep(target, delta);
             }
             return;
         }
 
-        // 2. Optional Modifier Wheel (Alt + Wheel over Video for Brightness / Volume)
-        // CRITICAL: Plain two-finger scrolling on a laptop trackpad (no Alt, no Shift)
-        // must NEVER be hijacked, so the user can scroll the web page naturally without
-        // mutating speed, volume, or brightness!
-        if ((e.altKey || e.shiftKey) && prefs.gestureZonesEnabled && Math.abs(e.deltaY) > 2) {
-            const target = findVideoAtPoint(e.clientX, e.clientY);
-            if (!target) return;
-
-            const rect = target.getBoundingClientRect();
-            if (rect.width <= 0) return;
-
-            const relX = (e.clientX - rect.left) / rect.width;
-
-            // Left side: Brightness Control
-            if (relX <= 0.45) {
-                if (e.cancelable) {
-                    try { e.preventDefault(); } catch (_) {}
-                }
-                try { e.stopPropagation(); } catch (_) {}
-
-                const delta = e.deltaY < 0 ? 5 : -5;
-                adjustBrightness(delta, true);
-                return;
+        // 3. Horizontal Two-Finger Swipe over video player:
+        // Left/Right swipe controls speed without hijacking vertical page scrolling
+        if (isOverVideo && prefs.trackpadSpeedEnabled && Math.abs(e.deltaX) > Math.abs(e.deltaY) + 6) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
             }
+            try { e.stopPropagation(); } catch (_) {}
 
-            // Right side: Volume Control (including Boost)
-            if (relX >= 0.55) {
+            const dir = prefs.gestureReverse ? -1 : 1;
+            const delta = e.deltaX * dir;
+            handleSpeedWheelStep(target, delta);
+            return;
+        }
+
+        // 4. In Fullscreen Mode:
+        // In fullscreen mode the page cannot scroll, so vertical two-finger scroll directly controls playback speed
+        if (isFullscreen && isOverVideo && prefs.trackpadSpeedEnabled) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+
+            const dir = prefs.gestureReverse ? -1 : 1;
+            handleSpeedWheelStep(target, -e.deltaY * dir);
+            return;
+        }
+
+        // 5. Wheel over Toolbar Speed Button:
+        const overSpeedBtn = e.target && e.target.closest && e.target.closest('#tb-speed, .tb-speed-btn, #tb-speed-val');
+        if (overSpeedBtn) {
+            const v = getVideo();
+            if (v) {
                 if (e.cancelable) {
                     try { e.preventDefault(); } catch (_) {}
                 }
-                try { e.stopPropagation(); } catch (_) {}
-
-                const delta = e.deltaY < 0 ? 0.05 : -0.05;
-                const nextVol = Math.round((prefs.volume + delta) * 100) / 100;
-                applyVolumeAndBoost(target, nextVol, true);
+                const dir = prefs.gestureReverse ? -1 : 1;
+                handleSpeedWheelStep(v, -e.deltaY * dir);
                 return;
             }
         }
+
+        // In normal page view: Plain two-finger vertical scrolling is NEVER hijacked!
+        // The user can freely, smoothly, and effortlessly scroll the webpage down and up!
     }, { capture: true, passive: false });
 
     /* =========================================================
