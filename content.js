@@ -155,8 +155,7 @@
         pos: loadValue('pos', null),
         pinned: Boolean(loadValue('pinned', false)),
         manualPos: Boolean(loadValue('manualPos', false)),
-        shortcuts: loadValue('shortcuts', true) !== false,
-        showToolbar: Boolean(loadValue('showToolbar', false)),
+        showToolbar: false, // Default: toolbar is strictly on-demand, only shown when clicking the VidAmp side dropdown
 
         // Enhanced feature flags & settings
         trackpadSpeedEnabled: loadValue('trackpadSpeedEnabled', true) !== false,
@@ -3201,7 +3200,10 @@
 
         toolbarHost = document.createElement('div');
         toolbarHost.id = 'mvc-toolbar-host';
-        toolbarHost.style.display = 'none';
+        toolbarHost.classList.add('mvc-hidden');
+        toolbarHost.setAttribute('hidden', '');
+        toolbarHost.style.setProperty('display', 'none', 'important');
+        toolbarHost.style.setProperty('visibility', 'hidden', 'important');
 
         tbShadow = toolbarHost.attachShadow({ mode: 'open' });
 
@@ -3952,9 +3954,8 @@
 
     function toggleToolbarVisibility(forceState) {
         if (window.self !== window.top) return;
-        const nextState = typeof forceState === 'boolean' ? forceState : (prefs.showToolbar === false);
+        const nextState = typeof forceState === 'boolean' ? forceState : (!prefs.showToolbar);
         prefs.showToolbar = nextState;
-        saveValue('showToolbar', nextState);
         updateSideTabState(nextState);
         if (toolbarHost) {
             if (nextState) {
@@ -4044,11 +4045,67 @@
     window.addEventListener('mousemove', resetToolbarIdle, { passive: true });
     window.addEventListener('pointermove', resetToolbarIdle, { passive: true });
 
-    // Mount toolbar directly above video description (YouTube) or dock cleanly directly UNDER video player (Hotstar, generic sites)
+    function findTruePlayerContainer(v) {
+        if (!v) return null;
+        const playerSelectors = [
+            '.html5-video-player',
+            '#movie_player',
+            '.video-js',
+            '.jwplayer',
+            '.plyr',
+            '.vjs-tech',
+            '.shaka-video-container',
+            '.bmpui-ui-uicontainer',
+            '[data-player]',
+            '[class*="player-container"]',
+            '[class*="video-container"]',
+            '[class*="player_container"]',
+            '[class*="video_container"]',
+            '[id*="player-container"]',
+            '[id*="video-container"]',
+            '[class*="player-wrapper"]',
+            '[class*="video-wrapper"]',
+            '[class*="player"][class*="wrap"]',
+            '[class*="player"]',
+            '[id*="player"]'
+        ];
+        for (const sel of playerSelectors) {
+            try {
+                const el = v.closest(sel);
+                if (el && el !== document.body && el !== document.documentElement) {
+                    const elRect = el.getBoundingClientRect();
+                    const vRect = v.getBoundingClientRect();
+                    if (elRect.width >= vRect.width * 0.8 && elRect.height >= vRect.height * 0.8) {
+                        return el;
+                    }
+                }
+            } catch (_) {}
+        }
+        let cur = v.parentElement;
+        let candidate = v;
+        let depth = 0;
+        const vRect = v.getBoundingClientRect();
+        while (cur && cur !== document.body && cur !== document.documentElement && depth < 6) {
+            const cRect = cur.getBoundingClientRect();
+            if (cRect.width >= vRect.width * 0.9 && cRect.height >= vRect.height * 0.9) {
+                if (cRect.width < window.innerWidth * 1.5 && cRect.height < window.innerHeight * 1.5) {
+                    candidate = cur;
+                }
+            }
+            cur = cur.parentElement;
+            depth++;
+        }
+        return candidate;
+    }
+
+    // Mount toolbar strictly in page block flow BELOW video player (YouTube) or dock UNDER player container (Generic sites)
+    // GUARANTEE: The toolbar NEVER renders over the video frame on ANY video type.
     function mountToolbarInPage(targetVideo) {
         if (window.self !== window.top) return;
         if (!toolbarBuilt || !toolbarHost) return;
         if (isDraggingToolbar) return;
+
+        // Strictly honor hidden state and user preference
         if (prefs.showToolbar === false || toolbarHost.classList.contains('mvc-hidden') || toolbarHost.hasAttribute('hidden')) {
             toolbarHost.classList.add('mvc-hidden');
             toolbarHost.setAttribute('hidden', '');
@@ -4059,22 +4116,22 @@
 
         const v = targetVideo || video || (isRefreshingVideos ? null : getVideo());
 
-        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        const isFullscreen = Boolean(
+            document.fullscreenElement ||
+            document.webkitFullscreenElement ||
+            (v && v.closest && (v.closest('.ytp-fullscreen') || v.closest(':fullscreen') || v.closest(':-webkit-full-screen')))
+        );
         if (!v || !isLargeVideo(v) || isFullscreen) {
             toolbarHost.style.setProperty('display', 'none', 'important');
             return;
         }
 
-        // 1. YouTube Watch Page: Place cleanly in page block flow BEFORE ytd-watch-metadata (below player/Enhancer and above title)
+        // 1. YouTube Watch Page: Place cleanly in page block flow BEFORE ytd-watch-metadata (below player/theater and above title)
         if (isYouTubePage()) {
-            const isFullscreenYt = Boolean(document.fullscreenElement || document.webkitFullscreenElement || (v && v.closest && v.closest('.ytp-fullscreen')));
-            if (isFullscreenYt) {
-                toolbarHost.style.setProperty('display', 'none', 'important');
-                return;
-            }
-
             const watchMetadata = document.querySelector('ytd-watch-metadata') ||
-                                  document.querySelector('#below');
+                                  document.querySelector('#below') ||
+                                  document.querySelector('#primary-inner') ||
+                                  document.querySelector('#columns');
 
             if (watchMetadata && watchMetadata.parentNode) {
                 toolbarHost.classList.remove('mvc-floating-mode');
@@ -4101,11 +4158,15 @@
                 syncToolbar(v);
                 return;
             }
+
+            // YouTube metadata container not ready yet: hide toolbar and schedule retry.
+            // NEVER fall through to Section 2 (generic body positioning) on YouTube!
+            toolbarHost.style.setProperty('display', 'none', 'important');
+            setTimeout(tryMountYouTubeToolbar, 150);
+            return;
         }
 
-        // 2. Generic Video Sites (Hotstar, JioCinema, Netflix, Prime Video, Vimeo, etc.)
-        // NEVER inject into the site's internal component tree or flex containers!
-        // Instead, mount to document.body and place cleanly directly UNDER the video player container!
+        // 2. Generic Video Sites (Hotstar, JioCinema, Netflix, Prime Video, Vimeo, movie sites, etc.)
         const body = document.body || document.documentElement;
         if (!body) return;
 
@@ -4148,32 +4209,38 @@
             ].join(';');
         } else {
             // Default position: DOCKED STRICTLY UNDER THE VIDEO (Zero Overlap with the video!)
+            const container = findTruePlayerContainer(v) || v;
+            const cRect = (container && container !== v) ? container.getBoundingClientRect() : rect;
+            const bodyRect = body.getBoundingClientRect();
+
+            // Measure player boundary in viewport coordinates
+            const playerBottomViewport = Math.max(rect.bottom, cRect.bottom);
+            const playerLeftViewport = Math.min(rect.left, cRect.left);
+            const playerWidth = Math.max(rect.width, cRect.width);
+
+            // Full-window / Theater Guard: If the player fills viewport height and page has no scroll space below
+            const totalDocHeight = Math.max(document.documentElement.scrollHeight, body.scrollHeight);
+            const playerBottomDoc = playerBottomViewport - bodyRect.top;
+            const remainingDocSpaceBelow = totalDocHeight - playerBottomDoc;
+
+            // If player extends to the bottom of the window (within 24px) AND there's no scroll space below:
+            if (playerBottomViewport >= window.innerHeight - 24 && remainingDocSpaceBelow < 40) {
+                // Video takes up the full screen/window — do not render docked bar over the video!
+                toolbarHost.style.setProperty('display', 'none', 'important');
+                return;
+            }
+
             toolbarHost.classList.remove('mvc-floating-mode');
             toolbarHost.classList.add('mvc-docked-mode');
             if (toolbarHost.parentNode !== body) {
                 try { body.appendChild(toolbarHost); } catch (_) {}
             }
 
-            // Target the video container or fallback to video element
-            const player = findFullscreenTarget(v) || v.parentElement || v;
-            const targetEl = (player && player !== body && player !== document.documentElement) ? player : v;
-            const pRect = targetEl.getBoundingClientRect();
-            const bodyRect = body.getBoundingClientRect();
+            // In document coordinates: sit immediately UNDER the player container with generous clearance
+            const docTop = playerBottomDoc + 10;
 
-            // Accurate document coordinates relative to body coordinate space
-            const effectiveBottomDoc = Math.max(rect.bottom, pRect.bottom) - bodyRect.top;
-            const effectiveLeftDoc = Math.min(rect.left, pRect.left) - bodyRect.left;
-            const effectiveWidth = Math.max(rect.width, pRect.width);
-
-            // In document coordinates: sit immediately UNDER the video container
-            let docTop = effectiveBottomDoc + 8;
-            // Absolute floor: docTop MUST NEVER be less than the video's bottom edge + 8px
-            const minAllowedDocTop = (rect.bottom - bodyRect.top) + 8;
-            if (docTop < minAllowedDocTop) {
-                docTop = minAllowedDocTop;
-            }
-
-            let docLeft = effectiveLeftDoc + (effectiveWidth - tbWidth) / 2;
+            const effectiveLeftDoc = playerLeftViewport - bodyRect.left;
+            let docLeft = effectiveLeftDoc + (playerWidth - tbWidth) / 2;
             const maxScrollW = body.scrollWidth || window.innerWidth;
             docLeft = Math.max(12, Math.min(maxScrollW - tbWidth - 12, docLeft));
 
@@ -4203,7 +4270,10 @@
         let ytMountScheduled = false;
         function tryMountYouTubeToolbar() {
             if (!toolbarBuilt || !toolbarHost || Boolean(document.fullscreenElement) || prefs.showToolbar === false || toolbarHost.classList.contains('mvc-hidden')) return;
-            const watchMetadata = document.querySelector('ytd-watch-metadata') || document.querySelector('#below');
+            const watchMetadata = document.querySelector('ytd-watch-metadata') ||
+                                  document.querySelector('#below') ||
+                                  document.querySelector('#primary-inner') ||
+                                  document.querySelector('#columns');
             if (watchMetadata && (!toolbarHost.isConnected || toolbarHost.nextSibling !== watchMetadata)) {
                 if (ytMountScheduled) return;
                 ytMountScheduled = true;
@@ -4217,8 +4287,14 @@
         // Lightweight hooks on navigation and player updates instead of scanning entire DOM tree
         ['yt-navigate-finish', 'yt-page-data-updated', 'spfdone'].forEach(evt => {
             document.addEventListener(evt, () => {
-                setTimeout(tryMountYouTubeToolbar, 150);
-                setTimeout(tryMountYouTubeToolbar, 600);
+                setTimeout(() => {
+                    tryMountYouTubeToolbar();
+                    if (sideTabBuilt) positionSideTab();
+                }, 150);
+                setTimeout(() => {
+                    tryMountYouTubeToolbar();
+                    if (sideTabBuilt) positionSideTab();
+                }, 600);
             }, { passive: true });
         });
     }
@@ -4263,7 +4339,11 @@
         if (!sideTabBuilt || !sideTabHost || !sideTabBtn) return;
         if (isDraggingSideTab) return;
 
-        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        const isFullscreen = Boolean(
+            document.fullscreenElement ||
+            document.webkitFullscreenElement ||
+            (targetVideo && targetVideo.closest && (targetVideo.closest('.ytp-fullscreen') || targetVideo.closest(':fullscreen') || targetVideo.closest(':-webkit-full-screen')))
+        );
         if (isFullscreen) {
             sideTabHost.classList.remove('visible');
             sideTabHost.style.setProperty('display', 'none', 'important');
@@ -4298,12 +4378,17 @@
                 'pointer-events: none !important'
             ].join(';');
         } else {
-            // Default position: floating cleanly in the upper-right corner of the video player
-            const defaultLeft = rect.right - tabWidth - 14;
-            const defaultTop = rect.top + Math.max(12, Math.min(48, rect.height * 0.1));
+            // Default position: flush against the top-right corner of the video player container
+            const container = findTruePlayerContainer(v) || v;
+            const cRect = (container && container !== v) ? container.getBoundingClientRect() : rect;
+            const effectiveTop = Math.min(rect.top, cRect.top);
+            const effectiveRight = Math.max(rect.right, cRect.right);
 
-            const clampedLeft = Math.max(8, Math.min(window.innerWidth - tabWidth - 8, defaultLeft));
-            const clampedTop = Math.max(8, Math.min(window.innerHeight - tabHeight - 8, defaultTop));
+            const defaultLeft = effectiveRight - tabWidth - 6;
+            const defaultTop = effectiveTop + 4;
+
+            const clampedLeft = Math.max(4, Math.min(window.innerWidth - tabWidth - 4, defaultLeft));
+            const clampedTop = Math.max(4, Math.min(window.innerHeight - tabHeight - 4, defaultTop));
 
             sideTabHost.style.cssText = [
                 'position: fixed !important',
@@ -4323,13 +4408,13 @@
         if (!sideTabBuilt || !sideTabBtn) return;
         sideTabBtn.classList.remove('idle');
         clearTimeout(sideTabIdleTimer);
-        // Dim when toolbar is closed and idle so it never obstructs viewing
+        // Dim/vanish when toolbar is closed and idle so it never obstructs viewing
         if (!prefs.showToolbar) {
             sideTabIdleTimer = setTimeout(() => {
-                if (sideTabBtn && !sideTabBtn.matches(':hover')) {
+                if (sideTabBtn && !sideTabBtn.matches(':hover') && !sideTabBtn.classList.contains('active')) {
                     sideTabBtn.classList.add('idle');
                 }
-            }, 3000);
+            }, 2500);
         }
     }
 
@@ -4400,8 +4485,10 @@
                 color: #4c9aff;
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 12px rgba(76, 154, 255, 0.4);
             }
-            #mvc-side-dropdown.idle {
-                opacity: 0.25;
+            #mvc-side-dropdown.idle:not(.active):not(:hover) {
+                opacity: 0 !important;
+                pointer-events: none !important;
+                transform: translateY(-4px) scale(0.95);
             }
             .side-badge {
                 font-size: 12px;
@@ -4491,6 +4578,9 @@
         body.appendChild(sideTabHost);
         sideTabBuilt = true;
         updateSideTabState();
+        if (!prefs.showToolbar) {
+            btn.classList.add('idle');
+        }
         positionSideTab();
     }
 
