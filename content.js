@@ -247,31 +247,42 @@
         );
     }
 
-    function collectVideos(root, out, seenVideos, seenRoots) {
-        if (!root || !root.querySelectorAll) return;
+    function collectVideos(initialRoot, out, seenVideos, seenRoots) {
+        if (!initialRoot || !initialRoot.querySelectorAll) return;
+        const queue = [{ root: initialRoot, depth: 0 }];
+        const MAX_DEPTH = 3;
 
-        let directVideos = [];
-        try {
-            directVideos = [...root.querySelectorAll('video')];
-        } catch (_) {}
+        while (queue.length > 0) {
+            const { root, depth } = queue.shift();
+            if (!root || !root.querySelectorAll) continue;
 
-        for (const v of directVideos) {
-            if (!seenVideos.has(v)) {
-                seenVideos.add(v);
-                out.push(v);
+            let directVideos = [];
+            try {
+                directVideos = [...root.querySelectorAll('video')];
+            } catch (_) {}
+
+            for (const v of directVideos) {
+                if (!seenVideos.has(v)) {
+                    seenVideos.add(v);
+                    out.push(v);
+                }
             }
-        }
 
-        // Only inspect candidate video player hosts for shadow roots - NEVER scan every element '*' on the page!
-        let playerHosts = [];
-        try {
-            playerHosts = [...root.querySelectorAll('[class*="player"], [id*="player"], video-js, media-player, ytd-player, ytd-watch-flexy')];
-        } catch (_) {}
+            if (depth < MAX_DEPTH) {
+                let playerHosts = [];
+                try {
+                    playerHosts = [...root.querySelectorAll('[class*="player"], [id*="player"], video-js, media-player, ytd-player, ytd-watch-flexy')];
+                } catch (_) {}
 
-        for (const el of playerHosts) {
-            if (!el.shadowRoot || seenRoots.has(el.shadowRoot)) continue;
-            seenRoots.add(el.shadowRoot);
-            collectVideos(el.shadowRoot, out, seenVideos, seenRoots);
+                for (const el of playerHosts) {
+                    try {
+                        const sr = el.shadowRoot;
+                        if (!sr || seenRoots.has(sr)) continue;
+                        seenRoots.add(sr);
+                        queue.push({ root: sr, depth: depth + 1 });
+                    } catch (_) {}
+                }
+            }
         }
     }
 
@@ -1401,41 +1412,49 @@
         if (toolbarBuilt) syncToolbar();
     }
 
+    let isRefreshingVideos = false;
     function refreshVideos({ resetIndex = false } = {}) {
-        videos = findVideos();
+        if (isRefreshingVideos) return video;
+        isRefreshingVideos = true;
 
-        if (resetIndex || videoIndex >= videos.length) {
-            videoIndex = 0;
-        }
+        try {
+            videos = findVideos();
 
-        const preferredUsable = isUsableVideo(preferredVideo) && videos.includes(preferredVideo);
-        const next = preferredUsable ? preferredVideo : (videos[videoIndex] || null);
-
-        if (next !== video) {
-            video = next;
-            if (video) {
-                videoIndex = Math.max(0, videos.indexOf(video));
-                preferredVideo = video;
+            if (resetIndex || videoIndex >= videos.length) {
+                videoIndex = 0;
             }
 
-            if (video && !panelBuilt) buildPanel();
+            const preferredUsable = isUsableVideo(preferredVideo) && videos.includes(preferredVideo);
+            const next = preferredUsable ? preferredVideo : (videos[videoIndex] || null);
 
-            attachVideoListeners(video);
-            applySitePreferences(video);
-            syncControlsToVideo();
-            setupSmartMiniplayer();
-        }
+            if (next !== video) {
+                video = next;
+                if (video) {
+                    videoIndex = Math.max(0, videos.indexOf(video));
+                    preferredVideo = video;
+                }
 
-        updateVideoCounter();
+                if (video && !panelBuilt) buildPanel();
 
-        if (panelBuilt && !prefs.manualPos) {
-            positionPanelSmartly();
-        }
+                attachVideoListeners(video);
+                applySitePreferences(video);
+                syncControlsToVideo();
+                setupSmartMiniplayer();
+            }
 
-        observeOpenShadowRoots();
+            updateVideoCounter();
 
-        if (toolbarBuilt) {
-            positionToolbar();
+            if (panelBuilt && !prefs.manualPos) {
+                positionPanelSmartly();
+            }
+
+            observeOpenShadowRoots();
+
+            if (toolbarBuilt) {
+                positionToolbar(video);
+            }
+        } finally {
+            isRefreshingVideos = false;
         }
 
         return video;
@@ -1454,6 +1473,8 @@
         }
         if (isUsableVideo(preferredVideo)) return preferredVideo;
         if (isUsableVideo(video)) return video;
+        if (video && video.isConnected) return video;
+        if (isRefreshingVideos) return video;
         preferredVideo = null;
         video = null;
         return refreshVideos();
@@ -3157,8 +3178,10 @@
         setTimeout(positionToolbar, 100);
     }
 
+    let toolbarBuildInProgress = false;
     function buildToolbar() {
-        if (toolbarBuilt) return;
+        if (toolbarBuilt || toolbarBuildInProgress) return;
+        toolbarBuildInProgress = true;
 
         toolbarHost = document.createElement('div');
         toolbarHost.id = 'mvc-toolbar-host';
@@ -3806,13 +3829,14 @@
         });
 
         toolbarBuilt = true;
-        mountToolbarInPage();
+        toolbarBuildInProgress = false;
+        mountToolbarInPage(video);
     }
 
     // Sync toolbar icon states
-    function syncToolbar() {
+    function syncToolbar(targetVideo) {
         if (!toolbarBuilt || !tbShadow) return;
-        const v = getVideo();
+        const v = targetVideo || video || (isRefreshingVideos ? null : getVideo());
 
         const loopB = tbShadow.querySelector('#tb-loop');
         if (loopB) loopB.classList.toggle('active', Boolean(v && v.loop));
@@ -3971,7 +3995,7 @@
     window.addEventListener('pointermove', resetToolbarIdle, { passive: true });
 
     // Mount toolbar directly above video description (YouTube) or dock cleanly directly UNDER video player (Hotstar, generic sites)
-    function mountToolbarInPage() {
+    function mountToolbarInPage(targetVideo) {
         if (!toolbarBuilt || !toolbarHost) return;
         if (isDraggingToolbar) return;
         if (prefs.showToolbar === false || toolbarHost.classList.contains('mvc-hidden') || toolbarHost.hasAttribute('hidden')) {
@@ -3982,7 +4006,7 @@
             return;
         }
 
-        const v = getVideo();
+        const v = targetVideo || video || (isRefreshingVideos ? null : getVideo());
 
         const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
         if (!v || !isLargeVideo(v) || isFullscreen) {
@@ -4017,7 +4041,7 @@
                         watchMetadata.parentNode.insertBefore(toolbarHost, watchMetadata);
                     } catch (_) {}
                 }
-                syncToolbar();
+                syncToolbar(v);
                 return;
             }
         }
@@ -4105,7 +4129,7 @@
             ].join(';');
         }
 
-        syncToolbar();
+        syncToolbar(v);
     }
 
     const positionToolbar = mountToolbarInPage;
@@ -4416,7 +4440,7 @@
         }
 
         if (toolbarBuilt) {
-            syncToolbar();
+            syncToolbar(video);
         }
     }
 
