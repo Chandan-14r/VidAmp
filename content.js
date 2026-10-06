@@ -1048,7 +1048,7 @@
         setCurrentTimeNative(v, targetTime);
 
         const sign = direction > 0 ? '+1' : '-1';
-        showToast(`🎞️ Frame ${sign} · ${formatTimeWithMs(targetTime)}`);
+        showToast(`🎞️ Frame ${sign}`);
         syncControlsToVideo();
     }
 
@@ -4709,7 +4709,6 @@
         const closeEnough = Number.isFinite(current) && Math.abs(current - target) < 0.35;
 
         if (closeEnough) {
-            showToast(formatTime(target));
             return;
         }
 
@@ -4877,8 +4876,17 @@
     let videoHudEl = null;
     let videoHudTimer = null;
 
+    function isTimingMessage(str) {
+        if (!str || typeof str !== 'string') return false;
+        const s = str.trim();
+        return /^-?\d{1,2}:\d{2}(:\d{2})?$/.test(s) || /^\d{1,2}:\d{2}\s*\/\s*\d{1,2}:\d{2}$/.test(s);
+    }
+
     function showVideoHud(message) {
         if (!message) return;
+        if (window.self !== window.top) return; // Prevent duplicate HUD overlays from iframes
+        if (isTimingMessage(message)) return; // Strictly suppress any video timing pill on top of video
+
         if (!videoHudEl) {
             videoHudEl = document.createElement('div');
             videoHudEl.id = 'mvc-video-hud';
@@ -4929,6 +4937,9 @@
 
     function showToast(message) {
         if (!message) return;
+        // Suppress any video timing display (user requested complete removal of top timing pill)
+        if (isTimingMessage(message)) return;
+
         // Suppress duplicate 2x badge on YouTube (YouTube already renders its native 2x bubble on screen)
         if (isYouTubePage() && typeof message === 'string' && (message.includes('2×') || message.includes('2x') || message.includes('hold'))) {
             return;
@@ -6237,12 +6248,14 @@
                 break;
 
             case 'ArrowLeft':
+                if (isYouTubePage()) return; // Let YouTube handle its native smooth seek
                 e.preventDefault();
                 e.stopPropagation();
                 seekVideo(v, -prefs.seekSeconds);
                 break;
 
             case 'ArrowRight':
+                if (isYouTubePage()) return; // Let YouTube handle its native smooth seek
                 e.preventDefault();
                 e.stopPropagation();
                 seekVideo(v, prefs.seekSeconds);
