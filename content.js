@@ -1601,12 +1601,12 @@
                 return;
             }
 
-            // 1. Temporary 2x boost detection (YouTube hold-to-2x, Spacebar hold)
-            if (Math.abs(n - 2.0) < 0.01 && (rateGuard || spaceKeyIntercepted)) {
+            // 1. Temporary 2x boost detection (YouTube native hold-to-2x, spacebar hold, double-tap hold)
+            if (isYouTubePage() && Math.abs(n - 2.0) < 0.01) {
                 if (Math.abs(persistentUserSpeed - 2.0) >= 0.01) {
                     temporaryBoostActive = true;
                     temporaryBoostOriginalSpeed = persistentUserSpeed;
-                    if (toolbarBuilt) syncToolbar();
+                    if (toolbarBuilt) syncToolbar(v);
                     return;
                 }
             }
@@ -4788,6 +4788,11 @@
     }
 
     function showToast(message) {
+        if (!message) return;
+        // Suppress duplicate 2x badge on YouTube (YouTube already renders its native 2x bubble on screen)
+        if (isYouTubePage() && typeof message === 'string' && (message.includes('2×') || message.includes('2x') || message.includes('hold'))) {
+            return;
+        }
         showVideoHud(message);
         if (panelBuilt && toastEl) {
             toastEl.textContent = String(message);
@@ -5311,6 +5316,7 @@
     }
 
     function engageHoldBoost() {
+        if (isYouTubePage()) return; // YouTube handles native 2x speed; never duplicate!
         if (!holdBoostVideo || !holdBoostVideo.isConnected) return;
         holdBoostRestoreRate = validSpeed(prefs.speed) ? prefs.speed : (Number(holdBoostVideo.playbackRate) || 1);
         holdBoostEngaged = true;
@@ -5348,6 +5354,7 @@
 
     document.addEventListener('pointerdown', e => {
         if (e.pointerType !== 'touch') return;
+        if (isYouTubePage()) return; // YouTube handles native touch/double-tap 2x gestures!
         if (eventIsInsideController(e)) return;
 
         gesturePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -5773,7 +5780,7 @@
             }
             try { e.stopPropagation(); } catch (_) {}
 
-            const pinchDir = prefs.gestureReverse ? 1 : -1;
+            const pinchDir = prefs.gestureReverse ? -1 : 1;
             handleSpeedWheelStep(target, -e.deltaY * pinchDir, false);
             return;
         }
