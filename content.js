@@ -151,6 +151,7 @@
             : 1,
         muted: Boolean(loadValue(siteKey('muted'), false)),
         seekSeconds: validSeek(loadValue(siteKey('seekSeconds'), 10)) ? Number(loadValue(siteKey('seekSeconds'), 10)) : 10,
+        shortcuts: loadValue('shortcuts', true) !== false,
 
         pos: loadValue('pos', null),
         pinned: Boolean(loadValue('pinned', false)),
@@ -2390,30 +2391,7 @@
                 }
 
                 #toast {
-                    position: fixed;
-                    top: 24px;
-                    left: 50%;
-                    transform: translateX(-50%) scale(.92);
-                    background: rgba(18, 20, 28, 0.94);
-                    color: #f8fafc;
-                    padding: 8px 18px;
-                    border-radius: 20px;
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                    font-size: 13.5px;
-                    font-weight: 600;
-                    opacity: 0;
-                    pointer-events: none;
-                    transition: opacity .15s cubic-bezier(0.16, 1, 0.3, 1), transform .15s cubic-bezier(0.16, 1, 0.3, 1);
-                    z-index: 2147483647;
-                    white-space: nowrap;
-                    box-shadow: 0 12px 32px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,0.1);
-                    border: 1px solid rgba(255,255,255,0.16);
-                    backdrop-filter: blur(20px);
-                    -webkit-backdrop-filter: blur(20px);
-                }
-                #toast.visible {
-                    opacity: 1;
-                    transform: translateX(-50%) scale(1);
+                    display: none !important;
                 }
 
                 #cheatsheet {
@@ -4893,27 +4871,30 @@
             videoHudEl.style.cssText = [
                 'position: fixed !important',
                 'z-index: 2147483647 !important',
-                'top: 48px !important',
+                'top: 32px !important',
                 'left: 50% !important',
-                'transform: translateX(-50%) translateY(-6px) !important',
-                'background: rgba(15, 18, 25, 0.94) !important',
+                'transform: translateX(-50%) translateY(-6px) scale(0.94) !important',
+                'background: rgba(14, 16, 24, 0.90) !important',
                 'color: #ffffff !important',
-                'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important',
-                'font-size: 14px !important',
+                'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important',
+                'font-size: 13.5px !important',
                 'font-weight: 700 !important',
+                'letter-spacing: 0.3px !important',
                 'padding: 7px 18px !important',
                 'border-radius: 9999px !important',
-                'border: 1px solid rgba(148, 163, 184, 0.3) !important',
-                'box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6) !important',
+                'border: 1px solid rgba(56, 189, 248, 0.35) !important',
+                'box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 0 16px rgba(56, 189, 248, 0.18) !important',
                 'pointer-events: none !important',
                 'user-select: none !important',
                 'opacity: 0 !important',
-                'transition: opacity 0.16s ease, transform 0.16s ease !important',
+                'transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1) !important',
                 'display: flex !important',
                 'align-items: center !important',
-                'gap: 7px !important',
-                'backdrop-filter: blur(12px) !important',
-                '-webkit-backdrop-filter: blur(12px) !important'
+                'justify-content: center !important',
+                'gap: 8px !important',
+                'backdrop-filter: blur(20px) saturate(180%) !important',
+                '-webkit-backdrop-filter: blur(20px) saturate(180%) !important',
+                'white-space: nowrap !important'
             ].join(';');
         }
 
@@ -4922,15 +4903,24 @@
             try { targetParent.appendChild(videoHudEl); } catch (_) {}
         }
 
-        videoHudEl.textContent = String(message);
+        const msgStr = String(message).trim();
+        // Modern indicator with cyan icon badge
+        if (/\d+(?:\.\d+)?\s*[×x]/i.test(msgStr)) {
+            videoHudEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(56,189,248,0.22);color:#38bdf8;font-size:11px;font-weight:800;line-height:1;">⚡</span><span style="font-weight:700;color:#f8fafc;letter-spacing:0.4px;">${msgStr}</span>`;
+        } else if (msgStr.includes('Volume')) {
+            videoHudEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(56,189,248,0.22);color:#38bdf8;font-size:11px;line-height:1;">🔊</span><span style="font-weight:700;color:#f8fafc;">${msgStr.replace(/^[🔊🚀]\s*/, '')}</span>`;
+        } else {
+            videoHudEl.innerHTML = `<span style="font-weight:700;color:#f8fafc;">${msgStr}</span>`;
+        }
+
         videoHudEl.style.setProperty('opacity', '1', 'important');
-        videoHudEl.style.setProperty('transform', 'translateX(-50%) translateY(0)', 'important');
+        videoHudEl.style.setProperty('transform', 'translateX(-50%) translateY(0) scale(1)', 'important');
 
         clearTimeout(videoHudTimer);
         videoHudTimer = setTimeout(() => {
             if (videoHudEl) {
                 videoHudEl.style.setProperty('opacity', '0', 'important');
-                videoHudEl.style.setProperty('transform', 'translateX(-50%) translateY(-6px)', 'important');
+                videoHudEl.style.setProperty('transform', 'translateX(-50%) translateY(-6px) scale(0.94)', 'important');
             }
         }, 850);
     }
@@ -4944,16 +4934,9 @@
         if (isYouTubePage() && typeof message === 'string' && (message.includes('2×') || message.includes('2x') || message.includes('hold'))) {
             return;
         }
-        showVideoHud(message);
-        if (panelBuilt && toastEl) {
-            toastEl.textContent = String(message);
-            toastEl.classList.add('visible');
 
-            clearTimeout(toastTimer);
-            toastTimer = setTimeout(() => {
-                toastEl.classList.remove('visible');
-            }, 900);
-        }
+        // ONE single unified on-screen HUD (never duplicate)
+        showVideoHud(message);
     }
 
     /* =========================================================
@@ -5866,23 +5849,30 @@
         if (isDiscreteNotch) {
             steps = Math.sign(travel);
         } else {
+            // Touchpad gesture: accumulate delta smoothly without dropping finger momentum
             accumulatedWheelDelta += travel;
             clearTimeout(wheelIdleTimer);
             wheelIdleTimer = setTimeout(() => {
                 accumulatedWheelDelta = 0;
-            }, 180);
+            }, 250);
 
-            const STEP_PX = 32;
-            if (Math.abs(accumulatedWheelDelta) >= STEP_PX) {
-                steps = Math.sign(accumulatedWheelDelta);
-                accumulatedWheelDelta = Math.sign(accumulatedWheelDelta) * (Math.abs(accumulatedWheelDelta) - STEP_PX) * 0.35;
+            // Frictionless, responsive threshold (10px) with velocity scaling
+            const STEP_PX = 10;
+            const absDelta = Math.abs(accumulatedWheelDelta);
+            if (absDelta >= STEP_PX) {
+                const dir = Math.sign(accumulatedWheelDelta);
+                // Allow dynamic scaling: fast pinch sweeps smoothly through speeds
+                const count = Math.min(4, Math.floor(absDelta / STEP_PX));
+                steps = dir * count;
+                // Preserve true remainder so gesture momentum flows naturally and seamlessly
+                accumulatedWheelDelta -= steps * STEP_PX;
             }
         }
 
         if (steps === 0) return;
 
         const now = performance.now();
-        if (now - wheelLastRateTime < 35) return;
+        if (now - wheelLastRateTime < 16) return; // Smooth 60fps refresh rate
         wheelLastRateTime = now;
 
         const currentRate = Number(target.playbackRate) || (prefs.speed || 1);
@@ -5919,12 +5909,11 @@
         const isOverVideo = Boolean(target && !isOverPlayerControl(e));
         if (!isOverVideo) return;
 
-        const isFullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
         const dir = prefs.gestureReverse ? -1 : 1;
         const isDiscrete = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 80;
 
         // 2. Laptop Touchpad Pinch Gesture (ctrlKey + wheel) over video player:
-        // Dedicated touchpad gesture for exponential speed control (never interferes with page scrolling!)
+        // Dedicated touchpad gesture for frictionless, smooth speed control (never interferes with page scrolling!)
         if (e.ctrlKey && prefs.trackpadSpeedEnabled) {
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
@@ -5963,26 +5952,14 @@
             }
             try { e.stopPropagation(); } catch (_) {}
 
-            const dir = prefs.gestureReverse ? -1 : 1;
             const delta = e.deltaX * dir;
             handleSpeedWheelStep(target, delta, false);
             return;
         }
 
-        // 5. In Fullscreen Mode:
-        // In fullscreen mode the page cannot scroll, so vertical two-finger scroll directly controls playback speed
-        if (isFullscreen && prefs.trackpadSpeedEnabled) {
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-
-            handleSpeedWheelStep(target, -e.deltaY * dir, isDiscrete);
-            return;
-        }
-
-        // In normal page view: Plain two-finger vertical scrolling is NEVER hijacked!
-        // The user can freely, smoothly, and effortlessly scroll the webpage down and up!
+        // Standard two-finger vertical scrolling (up/down) is NEVER hijacked!
+        // Whether in normal mode, theater mode, or fullscreen:
+        // The user can freely, smoothly, and normally scroll the page/player up and down!
     }, { capture: true, passive: false });
 
     /* =========================================================
@@ -6091,7 +6068,7 @@
         // Editable-element protection: never intercept typing in comment or search boxes!
         if (isEditableEvent(e)) return;
 
-        const v = getVideo();
+        const v = getVideo() || document.querySelector('video');
         if (!v) return;
 
         // Space: Universal Play / Pause (one physical press = one action, no repeats)
@@ -6112,7 +6089,7 @@
             return;
         }
 
-        // [ or BracketLeft: Snap down to nearest lower standard speed grid (e.g. 1.4x -> 1.25x -> 1.0x -> 0.75x)
+        // [ or BracketLeft: Decrease playback speed (0.1x step by default, 0.25x with Shift)
         if ((e.key === '[' || e.code === 'BracketLeft') && !e.ctrlKey && !e.altKey && !e.metaKey) {
             e.preventDefault();
             e.stopPropagation();
@@ -6123,13 +6100,15 @@
             }
 
             const curRate = (typeof v.playbackRate === 'number' && v.playbackRate > 0) ? v.playbackRate : (prefs.speed || 1.0);
-            const rate = stepDownToGrid(curRate);
-            setPlaybackRate(v, rate, true);
+            const rate = e.shiftKey
+                ? stepDownToGrid(curRate)
+                : Math.max(MIN_SPEED, Math.round((curRate - 0.1) * 20) / 20);
+            setPlaybackRate(v, Number(rate.toFixed(2)), true);
             if (toolbarBuilt) syncToolbar();
             return;
         }
 
-        // ] or BracketRight: Snap up to nearest higher standard speed grid (e.g. 1.4x -> 1.5x -> 1.75x -> 2.0x)
+        // ] or BracketRight: Increase playback speed (0.1x step by default, 0.25x with Shift)
         if ((e.key === ']' || e.code === 'BracketRight') && !e.ctrlKey && !e.altKey && !e.metaKey) {
             e.preventDefault();
             e.stopPropagation();
@@ -6140,8 +6119,10 @@
             }
 
             const curRate = (typeof v.playbackRate === 'number' && v.playbackRate > 0) ? v.playbackRate : (prefs.speed || 1.0);
-            const rate = stepUpToGrid(curRate);
-            setPlaybackRate(v, rate, true);
+            const rate = e.shiftKey
+                ? stepUpToGrid(curRate)
+                : Math.min(MAX_SPEED, Math.round((curRate + 0.1) * 20) / 20);
+            setPlaybackRate(v, Number(rate.toFixed(2)), true);
             if (toolbarBuilt) syncToolbar();
             return;
         }
