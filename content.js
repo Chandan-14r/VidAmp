@@ -421,7 +421,8 @@
     let spaceTargetVideo = null;
     let spaceKeyIntercepted = false;
     let spaceBoostEverEngaged = false;
-    const SPACE_HOLD_DELAY_MS = 220;
+    let spaceWasPausedOnDown = false;
+    const SPACE_HOLD_DELAY_MS = 350;
 
     // Double-tap & Pointer Hold-to-2x state
     let lastTapTimestamp = 0;
@@ -1559,24 +1560,35 @@
         }
     }
 
+    function isVideoPaused(v) {
+        if (!v) v = getVideo();
+        if (!v) return true;
+        if (isYouTubePage()) {
+            try {
+                const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                if (mp && typeof mp.getPlayerState === 'function') {
+                    const s = mp.getPlayerState();
+                    // 1 = PLAYING, 3 = BUFFERING
+                    if (s === 1 || s === 3) return false;
+                    if (s === 2 || s === 0 || s === -1) return true;
+                }
+            } catch (_) {}
+        }
+        return Boolean(v.paused);
+    }
+
     function togglePlayPause(v) {
         if (!v) v = getVideo();
         if (!v) return;
 
         // 1. YouTube specialized player integration
         if (isYouTubePage()) {
-            const playBtn = document.querySelector('.ytp-play-button');
-            if (playBtn) {
-                playBtn.click();
-                return;
-            }
-
             const moviePlayer = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
             if (moviePlayer && typeof moviePlayer.getPlayerState === 'function') {
                 try {
                     const state = moviePlayer.getPlayerState();
-                    // 1 = PLAYING
-                    if (state === 1) {
+                    // 1 = PLAYING, 3 = BUFFERING
+                    if (state === 1 || state === 3) {
                         if (typeof moviePlayer.pauseVideo === 'function') {
                             moviePlayer.pauseVideo();
                             return;
@@ -1594,7 +1606,8 @@
         // 2. Standard HTML5 video element toggle
         try {
             if (v.paused) {
-                safePlay(v);
+                const p = v.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
             } else {
                 v.pause();
             }
@@ -6322,15 +6335,31 @@
 
     window.addEventListener('keyup', e => {
         if (isSpaceKey(e)) {
-            const heldDuration = performance.now() - spaceDownTime;
+            if (!spaceKeyIntercepted) return;
+            spaceKeyIntercepted = false;
+
+            if (isEditableEvent(e)) return;
+
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+            try { e.stopImmediatePropagation(); } catch (_) {}
+
             if (spaceHoldTimer) {
                 clearTimeout(spaceHoldTimer);
                 spaceHoldTimer = null;
             }
 
+            // If the video was already paused on keydown, it started playing immediately on keydown!
+            if (spaceWasPausedOnDown) {
+                spaceWasPausedOnDown = false;
+                spaceTargetVideo = null;
+                return;
+            }
+
             const wasBoosted = (holdBoostEngaged && holdBoostSource === 'space') || spaceBoostEverEngaged || (temporaryBoostActive && holdBoostSource === 'space');
             spaceBoostEverEngaged = false;
-            spaceKeyIntercepted = false;
 
             if (wasBoosted) {
                 // Spacebar hold boost was active: restore original speed and NEVER pause the video!
@@ -6339,31 +6368,15 @@
                 spaceTargetVideo = null;
                 ensureVideoPlaying(v);
                 setTimeout(() => { ensureVideoPlaying(v); }, 60);
-
-                if (e.cancelable) {
-                    try { e.preventDefault(); } catch (_) {}
-                }
-                try { e.stopPropagation(); } catch (_) {}
-                try { e.stopImmediatePropagation(); } catch (_) {}
                 return;
             }
 
-            // Quick tap (< 220ms): cleanly toggle play/pause
-            if (heldDuration < SPACE_HOLD_DELAY_MS) {
-                const v = spaceTargetVideo || getVideo() || document.querySelector('video');
-                spaceTargetVideo = null;
-                if (v) {
-                    togglePlayPause(v);
-                }
-            } else {
-                spaceTargetVideo = null;
+            // Normal tap while playing: cleanly pause the video!
+            const v = spaceTargetVideo || getVideo() || document.querySelector('video');
+            spaceTargetVideo = null;
+            if (v) {
+                togglePlayPause(v);
             }
-
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-            try { e.stopImmediatePropagation(); } catch (_) {}
             return;
         }
     }, { capture: true });
@@ -6436,10 +6449,28 @@
 
             spaceKeyIntercepted = true;
 
-            // Blur any currently focused button so the browser doesn't activate it via Space
-            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+            // Only blur focused buttons so Space doesn't re-trigger a previously clicked button
+            if (document.activeElement && document.activeElement.tagName === 'BUTTON') {
                 try { document.activeElement.blur(); } catch (_) {}
             }
+
+            // Case 1: Video is currently paused -> start playback immediately on keydown (0ms delay)!
+            if (isVideoPaused(v)) {
+                if (e.repeat) return; // Don't re-trigger on OS keyrepeat
+                spaceWasPausedOnDown = true;
+                spaceDownTime = performance.now();
+                spaceTargetVideo = v;
+                spaceBoostEverEngaged = false;
+                if (spaceHoldTimer) {
+                    clearTimeout(spaceHoldTimer);
+                    spaceHoldTimer = null;
+                }
+                togglePlayPause(v);
+                return;
+            }
+
+            // Case 2: Video is currently playing -> tap pauses on keyup, or hold engages 2x boost after 350ms
+            spaceWasPausedOnDown = false;
 
             if (e.repeat) {
                 // OS key repeat while holding Spacebar:
@@ -6455,7 +6486,7 @@
                 return;
             }
 
-            // First press down: start hold-to-2x timer (220ms)
+            // First press down: start hold-to-2x timer (350ms)
             spaceDownTime = performance.now();
             spaceTargetVideo = v;
             spaceBoostEverEngaged = false;
@@ -6465,7 +6496,7 @@
             spaceHoldTimer = setTimeout(() => {
                 spaceHoldTimer = null;
                 const target = spaceTargetVideo || getVideo() || v;
-                if (target) {
+                if (target && !isVideoPaused(target)) {
                     spaceBoostEverEngaged = true;
                     engageTemporaryBoost(target, 'space', 2.0);
                 }
