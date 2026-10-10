@@ -393,9 +393,27 @@
     let holdBoostVideo = null;
     let holdBoostRestoreRate = null;
     let holdBoostEngaged = false;
+    let holdBoostSource = null; // 'space' | 'pointer' | 'double-tap'
     let holdBoostStartPos = null;
     let holdBoostDownTime = 0;
     let suppressNextClick = false;
+
+    // Spacebar Hold-to-2x state
+    let spaceDownTime = 0;
+    let spaceHoldTimer = null;
+    let spaceTargetVideo = null;
+    let spaceKeyIntercepted = false;
+    const SPACE_HOLD_DELAY_MS = 220;
+
+    // Double-tap & Pointer Hold-to-2x state
+    let lastTapTimestamp = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+    let isDoubleTapCandidate = false;
+    const DOUBLE_TAP_MAX_GAP_MS = 380;
+    const DOUBLE_TAP_HOLD_DELAY_MS = 140;
+    const SINGLE_HOLD_DELAY_MS = 280;
+    const HOLD_MAX_MOVE_PX = 22;
 
     // Mouse speed drag state (moving mouse in opposite directions to inc/dec speed)
     let mouseDragActive = false;
@@ -1593,15 +1611,22 @@
             if (!validSpeed(n)) return;
 
             if (isInternalRateChange) {
-                prefs.speed = n;
-                persistentUserSpeed = n;
-                saveValue(siteKey('speed'), n);
-                if (toolbarBuilt) syncToolbar();
-                syncControlsToVideo();
+                if (!holdBoostEngaged && !temporaryBoostActive) {
+                    prefs.speed = n;
+                    persistentUserSpeed = n;
+                    saveValue(siteKey('speed'), n);
+                    if (toolbarBuilt) syncToolbar();
+                    syncControlsToVideo();
+                }
                 return;
             }
 
-            // 1. Temporary 2x boost detection (YouTube native hold-to-2x, spacebar hold, double-tap hold)
+            // If a temporary hold boost is actively engaged by our extension, ignore ratechange
+            if (holdBoostEngaged || temporaryBoostActive) {
+                return;
+            }
+
+            // 1. Temporary 2x boost detection (YouTube native hold-to-2x)
             if (isYouTubePage() && Math.abs(n - 2.0) < 0.01) {
                 if (Math.abs(persistentUserSpeed - 2.0) >= 0.01) {
                     temporaryBoostActive = true;
@@ -5445,32 +5470,83 @@
        ========================================================= */
 
     function cancelHoldBoostTimer() {
-        clearTimeout(holdBoostTimer);
-        holdBoostTimer = null;
+        if (holdBoostTimer) {
+            clearTimeout(holdBoostTimer);
+            holdBoostTimer = null;
+        }
     }
 
-    function engageHoldBoost() {
-        if (isYouTubePage()) return; // YouTube handles native 2x speed; never duplicate!
-        if (!holdBoostVideo || !holdBoostVideo.isConnected) return;
-        holdBoostRestoreRate = validSpeed(prefs.speed) ? prefs.speed : (Number(holdBoostVideo.playbackRate) || 1);
+    function engageTemporaryBoost(target, source = 'pointer', boostRate = 2.0) {
+        if (!target || !target.isConnected) return;
+        if (holdBoostEngaged) return;
+
+        const currentRate = (typeof target.playbackRate === 'number' && target.playbackRate > 0)
+            ? target.playbackRate
+            : (prefs.speed || persistentUserSpeed || 1.0);
+
+        const rateToSet = (currentRate >= 2.0) ? Math.min(MAX_SPEED, currentRate + 0.5) : boostRate;
+
         holdBoostEngaged = true;
-        try { holdBoostVideo.playbackRate = HOLD_BOOST_SPEED; } catch (_) {}
-        showToast(`${formatSpeed(HOLD_BOOST_SPEED)} (hold)`);
+        holdBoostSource = source;
+        holdBoostVideo = target;
+        holdBoostRestoreRate = persistentUserSpeed || currentRate || 1.0;
+        temporaryBoostActive = true;
+        temporaryBoostOriginalSpeed = holdBoostRestoreRate;
+
+        if (source === 'space' && target.paused) {
+            try { target.play(); } catch (_) {}
+        }
+
+        try {
+            isInternalRateChange = true;
+            target.playbackRate = rateToSet;
+            setTimeout(() => { isInternalRateChange = false; }, 80);
+        } catch (_) {}
+
+        showToast(`⚡ ${formatSpeed(rateToSet)} (hold)`);
         if (toolbarBuilt) syncToolbar();
     }
 
-    function releaseHoldBoost() {
+    function releaseTemporaryBoost(source = null) {
+        if (!holdBoostEngaged) return;
+        if (source && holdBoostSource && holdBoostSource !== source) return;
+
         cancelHoldBoostTimer();
-        if (holdBoostEngaged && holdBoostVideo && holdBoostVideo.isConnected) {
-            setPlaybackRate(holdBoostVideo, holdBoostRestoreRate, false);
-            showToast(formatSpeed(holdBoostRestoreRate));
-            suppressNextClick = true;
-        }
-        holdBoostPointerId = null;
+
+        const v = holdBoostVideo || getVideo();
+        const restoreRate = holdBoostRestoreRate || persistentUserSpeed || 1.0;
+
+        holdBoostEngaged = false;
+        holdBoostSource = null;
         holdBoostVideo = null;
         holdBoostRestoreRate = null;
-        holdBoostEngaged = false;
+        holdBoostPointerId = null;
         holdBoostStartPos = null;
+        temporaryBoostActive = false;
+        temporaryBoostOriginalSpeed = null;
+
+        if (v && v.isConnected) {
+            try {
+                isInternalRateChange = true;
+                v.playbackRate = restoreRate;
+                setTimeout(() => { isInternalRateChange = false; }, 80);
+            } catch (_) {}
+
+            prefs.speed = restoreRate;
+            persistentUserSpeed = restoreRate;
+            saveValue(siteKey('speed'), restoreRate);
+            syncControlsToVideo();
+            if (toolbarBuilt) syncToolbar();
+            showToast(`⚡ ${formatSpeed(restoreRate)}`);
+        }
+    }
+
+    function engageHoldBoost() {
+        if (holdBoostVideo) engageTemporaryBoost(holdBoostVideo, 'pointer', 2.0);
+    }
+
+    function releaseHoldBoost() {
+        releaseTemporaryBoost();
     }
 
     function abortHoldBoostCandidate() {
@@ -5483,64 +5559,109 @@
     function clearAllGesturePointers() {
         gesturePointers.clear();
         endSpeedGesture();
-        releaseHoldBoost();
+        releaseTemporaryBoost();
     }
 
     document.addEventListener('pointerdown', e => {
-        if (e.pointerType !== 'touch') return;
-        if (isYouTubePage()) return; // YouTube handles native touch/double-tap 2x gestures!
-        if (eventIsInsideController(e)) return;
-
-        gesturePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-        if (gesturePointers.size === 1) {
-            const target = findVideoAtPoint(e.clientX, e.clientY);
-            if (target) {
-                holdBoostPointerId = e.pointerId;
-                holdBoostVideo = target;
-                holdBoostStartPos = { x: e.clientX, y: e.clientY };
-                holdBoostEngaged = false;
-
-                cancelHoldBoostTimer();
-                holdBoostTimer = setTimeout(() => {
-                    if (gesturePointers.size === 1 && holdBoostPointerId === e.pointerId) {
-                        engageHoldBoost();
-                    }
-                }, HOLD_BOOST_DELAY_MS);
-            }
-        } else {
-            if (holdBoostEngaged) {
-                releaseHoldBoost();
-            } else {
+        // 1. Touchscreen 2-Finger Speed Gesture
+        if (e.pointerType === 'touch') {
+            gesturePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (gesturePointers.size === 2) {
                 abortHoldBoostCandidate();
+                startSpeedGesture();
+                return;
+            } else if (gesturePointers.size > 2) {
+                endSpeedGesture();
+                return;
             }
         }
 
-        if (gesturePointers.size === 2) {
-            startSpeedGesture();
-        } else if (gesturePointers.size > 2) {
-            endSpeedGesture();
+        // 2. Hold-to-2x & Double-Tap Long Press (Touchscreen, Laptop Touchpad, Mouse left-click)
+        // Guard: ignore non-primary mouse buttons or modifier keys (Right-click or Shift+Drag is for mouse drag gesture)
+        if (e.pointerType === 'mouse' && (e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)) {
+            return;
         }
+
+        // Guard: ignore if inside controller or typing in editable fields
+        if (eventIsInsideController(e) || isEditableEvent(e)) return;
+
+        // Find video target
+        const target = findVideoAtPoint(e.clientX, e.clientY) || getVideo();
+        if (!target || !target.isConnected) return;
+
+        // Guard: ignore if over player control bar or scrubber
+        if (isOverPlayerControl(e, target)) return;
+
+        // Detect if this is the second tap of a double tap
+        const now = performance.now();
+        const dt = now - lastTapTimestamp;
+        const dist = Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY);
+        const isDoubleTap = (dt > 40 && dt < DOUBLE_TAP_MAX_GAP_MS && dist < 45);
+
+        isDoubleTapCandidate = isDoubleTap;
+        holdBoostPointerId = e.pointerId;
+        holdBoostVideo = target;
+        holdBoostStartPos = { x: e.clientX, y: e.clientY };
+        holdBoostDownTime = now;
+
+        cancelHoldBoostTimer();
+        const holdDelay = isDoubleTap ? DOUBLE_TAP_HOLD_DELAY_MS : SINGLE_HOLD_DELAY_MS;
+
+        holdBoostTimer = setTimeout(() => {
+            holdBoostTimer = null;
+            if (holdBoostPointerId === e.pointerId && holdBoostVideo) {
+                engageTemporaryBoost(holdBoostVideo, isDoubleTapCandidate ? 'double-tap' : 'pointer', 2.0);
+                armClickSuppression();
+            }
+        }, holdDelay);
     }, true);
 
     document.addEventListener('pointermove', e => {
-        if (!gesturePointers.has(e.pointerId)) return;
-        gesturePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        updateSpeedGesture(e);
+        if (e.pointerType === 'touch' && gesturePointers.has(e.pointerId)) {
+            gesturePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            updateSpeedGesture(e);
+        }
 
         if (holdBoostPointerId === e.pointerId && !holdBoostEngaged && holdBoostStartPos) {
             const dx = e.clientX - holdBoostStartPos.x;
             const dy = e.clientY - holdBoostStartPos.y;
-            if (Math.hypot(dx, dy) > HOLD_BOOST_MOVE_TOLERANCE) {
+            if (Math.hypot(dx, dy) > HOLD_MAX_MOVE_PX) {
                 abortHoldBoostCandidate();
             }
         }
     }, { capture: true, passive: false });
 
     function releaseGesturePointerAndHoldBoost(e) {
-        releaseGesturePointer(e);
+        if (e.pointerType === 'touch') {
+            releaseGesturePointer(e);
+        }
+
         if (holdBoostPointerId === e.pointerId) {
-            releaseHoldBoost();
+            cancelHoldBoostTimer();
+
+            if (holdBoostEngaged) {
+                armClickSuppression();
+                releaseTemporaryBoost(holdBoostSource);
+                lastTapTimestamp = 0;
+                if (e.cancelable) {
+                    try { e.preventDefault(); } catch (_) {}
+                }
+                try { e.stopPropagation(); } catch (_) {}
+            } else {
+                const heldDuration = performance.now() - holdBoostDownTime;
+                if (holdBoostStartPos) {
+                    const dx = e.clientX - holdBoostStartPos.x;
+                    const dy = e.clientY - holdBoostStartPos.y;
+                    if (heldDuration < 300 && Math.hypot(dx, dy) <= HOLD_MAX_MOVE_PX) {
+                        lastTapTimestamp = performance.now();
+                        lastTapX = e.clientX;
+                        lastTapY = e.clientY;
+                    } else {
+                        lastTapTimestamp = 0;
+                    }
+                }
+                abortHoldBoostCandidate();
+            }
         }
     }
 
@@ -5557,7 +5678,7 @@
         clearTimeout(suppressClickTimer);
         suppressClickTimer = setTimeout(() => {
             suppressNextClick = false;
-        }, 80);
+        }, 400);
     }
 
     document.addEventListener('click', e => {
@@ -5569,7 +5690,24 @@
         try { e.stopImmediatePropagation(); } catch (_) {}
     }, true);
 
-    function isOverPlayerControl(e) {
+    document.addEventListener('mouseup', e => {
+        if (suppressNextClick) {
+            try { e.preventDefault(); } catch (_) {}
+            try { e.stopPropagation(); } catch (_) {}
+            try { e.stopImmediatePropagation(); } catch (_) {}
+        }
+    }, true);
+
+    function isOverPlayerControl(e, targetVideo = null) {
+        if (eventIsInsideController(e)) return true;
+
+        if (targetVideo && targetVideo.controls) {
+            try {
+                const rect = targetVideo.getBoundingClientRect();
+                if (e.clientY >= rect.bottom - 48) return true;
+            } catch (_) {}
+        }
+
         const path = e.composedPath ? e.composedPath() : [e.target];
         return path.some(node => {
             if (!(node instanceof HTMLElement)) return false;
@@ -5591,7 +5729,7 @@
                 node.classList?.contains('ytp-chrome-top') ||
                 node.classList?.contains('control-bar') ||
                 node.classList?.contains('player-controls') ||
-                Boolean(node.closest?.('.ytp-chrome-bottom, .ytp-chrome-top, .vjs-control-bar, .art-controls, [class*="progress-bar" i], [class*="scrub" i], [class*="slider" i]'))
+                Boolean(node.closest?.('.ytp-chrome-bottom, .ytp-chrome-top, .vjs-control-bar, .art-controls, .jw-controls, .jw-controlbar, .plyr__controls, [class*="progress" i], [class*="scrub" i], [class*="slider" i], [class*="control-bar" i], [class*="player-controls" i], [class*="controls-bar" i]'))
             );
         });
     }
@@ -5671,7 +5809,7 @@
         if (holdBoostPointerId === e.pointerId && !holdBoostEngaged && holdBoostStartPos) {
             const dx = e.clientX - holdBoostStartPos.x;
             const dy = e.clientY - holdBoostStartPos.y;
-            if (Math.hypot(dx, dy) > HOLD_BOOST_MOVE_TOLERANCE) {
+            if (Math.hypot(dx, dy) > HOLD_MAX_MOVE_PX) {
                 abortHoldBoostCandidate();
             }
         }
@@ -5757,14 +5895,8 @@
     }
 
     function checkTemporaryBoostRelease() {
-        if (!temporaryBoostActive) return;
-        const v = getVideo();
-        const restoreRate = temporaryBoostOriginalSpeed || persistentUserSpeed || 1.0;
-        temporaryBoostActive = false;
-        temporaryBoostOriginalSpeed = null;
-        if (v && Math.abs(Number(v.playbackRate) - restoreRate) > 0.01) {
-            setPlaybackRate(v, restoreRate, true);
-        }
+        if (!temporaryBoostActive && !holdBoostEngaged) return;
+        releaseTemporaryBoost();
     }
 
     window.addEventListener('pointerup', e => {
@@ -5966,8 +6098,6 @@
        Global Keyboard Shortcuts
        ========================================================= */
 
-    let spaceKeyIntercepted = false;
-
     function isSpaceKey(e) {
         return (
             e.code === 'Space' ||
@@ -6001,6 +6131,37 @@
 
     window.addEventListener('keyup', e => {
         if (isSpaceKey(e)) {
+            if (spaceHoldTimer) {
+                clearTimeout(spaceHoldTimer);
+                spaceHoldTimer = null;
+            }
+
+            if (holdBoostEngaged && holdBoostSource === 'space') {
+                // Spacebar hold boost was active: restore original speed and NEVER pause the video!
+                releaseTemporaryBoost('space');
+                spaceKeyIntercepted = false;
+                spaceTargetVideo = null;
+                try { e.preventDefault(); } catch (_) {}
+                try { e.stopPropagation(); } catch (_) {}
+                try { e.stopImmediatePropagation(); } catch (_) {}
+                return;
+            }
+
+            // Quick tap (< 220ms): cleanly toggle play/pause
+            const heldDuration = performance.now() - spaceDownTime;
+            if (spaceKeyIntercepted || heldDuration < 280) {
+                spaceKeyIntercepted = false;
+                const v = spaceTargetVideo || getVideo() || document.querySelector('video');
+                spaceTargetVideo = null;
+                if (v) {
+                    togglePlayPause(v);
+                }
+                try { e.preventDefault(); } catch (_) {}
+                try { e.stopPropagation(); } catch (_) {}
+                try { e.stopImmediatePropagation(); } catch (_) {}
+                return;
+            }
+
             checkTemporaryBoostRelease();
             if (spaceKeyIntercepted) {
                 spaceKeyIntercepted = false;
@@ -6071,13 +6232,12 @@
         const v = getVideo() || document.querySelector('video');
         if (!v) return;
 
-        // Space: Universal Play / Pause (one physical press = one action, no repeats)
+        // Space: Universal Play / Pause or Hold-to-2x Speed Boost
         if (isSpaceKey(e) && !e.ctrlKey && !e.altKey && !e.metaKey) {
             e.preventDefault();
             e.stopPropagation();
             try { e.stopImmediatePropagation(); } catch (_) {}
 
-            if (e.repeat) return;
             spaceKeyIntercepted = true;
 
             // Blur any currently focused button so the browser doesn't activate it via Space
@@ -6085,7 +6245,33 @@
                 try { document.activeElement.blur(); } catch (_) {}
             }
 
-            togglePlayPause(v);
+            if (e.repeat) {
+                // OS key repeat while holding Spacebar:
+                // If boost hasn't engaged yet, engage immediately!
+                if (!holdBoostEngaged) {
+                    if (spaceHoldTimer) {
+                        clearTimeout(spaceHoldTimer);
+                        spaceHoldTimer = null;
+                    }
+                    engageTemporaryBoost(v, 'space', 2.0);
+                }
+                return;
+            }
+
+            // First press down: start hold-to-2x timer (220ms)
+            spaceDownTime = performance.now();
+            spaceTargetVideo = v;
+            if (spaceHoldTimer) {
+                clearTimeout(spaceHoldTimer);
+            }
+            spaceHoldTimer = setTimeout(() => {
+                spaceHoldTimer = null;
+                const target = spaceTargetVideo || getVideo() || v;
+                if (target) {
+                    engageTemporaryBoost(target, 'space', 2.0);
+                }
+            }, SPACE_HOLD_DELAY_MS);
+
             return;
         }
 
