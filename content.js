@@ -97,12 +97,20 @@
     const STORAGE_PREFIX = 'mvc_';
     let storageCache = {};
 
+    function isContextValid() {
+        try {
+            return Boolean(extApi && extApi.runtime && extApi.runtime.id);
+        } catch (_) {
+            return false;
+        }
+    }
+
     try {
-        if (extApi && extApi.storage && extApi.storage.local) {
+        if (isContextValid() && extApi && extApi.storage && extApi.storage.local) {
             storageCache = await extApi.storage.local.get(null);
         }
-    } catch (err) {
-        console.warn('[MVC] Storage cache hydration fallback:', err);
+    } catch (_) {
+        // Silently fallback to memory cache if context invalidated or storage restricted
     }
 
     function loadValue(key, fallback) {
@@ -113,12 +121,16 @@
     function saveValue(key, value) {
         const k = STORAGE_PREFIX + key;
         storageCache[k] = value;
+        if (!isContextValid()) return;
         try {
             if (extApi && extApi.storage && extApi.storage.local) {
-                extApi.storage.local.set({ [k]: value });
+                const res = extApi.storage.local.set({ [k]: value });
+                if (res && typeof res.catch === 'function') {
+                    res.catch(() => {});
+                }
             }
-        } catch (err) {
-            console.warn('[MVC] Storage write failed:', err);
+        } catch (_) {
+            // Extension context was invalidated or write blocked; silently ignore
         }
     }
 
@@ -2644,7 +2656,7 @@
             </div>
             `);
         } catch (err) {
-            console.error('[MVC] buildPanel injection error:', err);
+            dbg('buildPanel injection error:', err);
             try { host.remove(); } catch (_) {}
             panelBuildInProgress = false;
             panelBuilt = false;
@@ -2859,8 +2871,9 @@
             for (const key of ['speed', 'volume', 'muted', 'seekSeconds', 'brightness', 'contrast', 'saturate']) {
                 try {
                     delete storageCache[STORAGE_PREFIX + siteKey(key)];
-                    if (extApi && extApi.storage && extApi.storage.local) {
-                        extApi.storage.local.remove(STORAGE_PREFIX + siteKey(key));
+                    if (isContextValid() && extApi && extApi.storage && extApi.storage.local) {
+                        const r = extApi.storage.local.remove(STORAGE_PREFIX + siteKey(key));
+                        if (r && typeof r.catch === 'function') r.catch(() => {});
                     }
                 } catch (_) {}
             }
@@ -6702,7 +6715,7 @@
         });
         }
     } catch (err) {
-        console.warn('[MVC] storage.onChanged setup error:', err);
+        dbg('storage.onChanged setup error:', err);
     }
 
     /* =========================================================
@@ -6822,7 +6835,7 @@
         try {
             observeOpenShadowRoots();
         } catch (err) {
-            console.error('[MVC] Initial observer setup failed:', err);
+            dbg('Initial observer setup failed:', err);
         }
         lastVideoScan = performance.now();
         refreshVideos({ resetIndex: true });
