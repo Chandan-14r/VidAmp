@@ -5051,15 +5051,16 @@
         }
 
         const msgStr = String(message).trim();
-        // Modern indicator with cyan icon badge
-        const speedMatch = msgStr.match(/(?:.*?)(?:(?:Playback\s*Speed:\s*)|(?:Speed:\s*)|(?:⚡\s*))?(\d+(?:\.\d+)?)\s*[×x]/i);
+        // Modern clean speed indicator (no lightning icons, pure clean notation like 1.0x, 2.0x)
+        const speedMatch = msgStr.match(/(\d+(?:\.\d+)?)\s*[×x]/i);
         if (speedMatch) {
             const cleanSpeed = formatSpeed(Number(speedMatch[1]));
-            videoHudEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(56,189,248,0.22);color:#38bdf8;font-size:11px;font-weight:800;line-height:1;">⚡</span><span style="font-weight:700;color:#f8fafc;letter-spacing:0.4px;">${cleanSpeed}</span>`;
+            videoHudEl.innerHTML = `<span style="font-weight:700;color:#f8fafc;letter-spacing:0.4px;">${cleanSpeed}</span>`;
         } else if (msgStr.includes('Volume')) {
             videoHudEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(56,189,248,0.22);color:#38bdf8;font-size:11px;line-height:1;">🔊</span><span style="font-weight:700;color:#f8fafc;">${msgStr.replace(/^[🔊🚀]\s*/, '')}</span>`;
         } else {
-            videoHudEl.innerHTML = `<span style="font-weight:700;color:#f8fafc;">${msgStr}</span>`;
+            const cleanMsg = msgStr.replace(/⚡\s*/g, '');
+            videoHudEl.innerHTML = `<span style="font-weight:700;color:#f8fafc;">${cleanMsg}</span>`;
         }
 
         videoHudEl.style.setProperty('opacity', '1', 'important');
