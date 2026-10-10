@@ -86,7 +86,11 @@
     }
 
     function formatSpeed(n) {
-        return (Math.round(Number(n) * 100) / 100) + '×';
+        const num = Number(n);
+        if (!Number.isFinite(num)) return '1.0x';
+        const rounded = Math.round(num * 100) / 100;
+        const str = (rounded % 1 === 0) ? rounded.toFixed(1) : rounded.toString();
+        return `${str}x`;
     }
 
     /* =========================================================
@@ -416,6 +420,7 @@
     let spaceHoldTimer = null;
     let spaceTargetVideo = null;
     let spaceKeyIntercepted = false;
+    let spaceBoostEverEngaged = false;
     const SPACE_HOLD_DELAY_MS = 220;
 
     // Double-tap & Pointer Hold-to-2x state
@@ -834,7 +839,7 @@
             if (now - lastLiveCatchupToastTime > 3000) {
                 lastLiveCatchupToastTime = now;
                 setPlaybackRate(v, 1.0, false);
-                showToast('🔴 Caught up to Live — Speed returned to 1×');
+                showToast(`🔴 Live: ${formatSpeed(1.0)}`);
                 if (toolbarBuilt) syncToolbar();
                 syncControlsToVideo();
             }
@@ -1532,6 +1537,25 @@
             await v.play();
         } catch (_) {
             showToast('Play blocked');
+        }
+    }
+
+    function ensureVideoPlaying(v) {
+        if (!v) v = getVideo();
+        if (!v) return;
+        try {
+            if (v.paused) {
+                const p = v.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+            }
+        } catch (_) {}
+        if (isYouTubePage()) {
+            try {
+                const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                if (mp && typeof mp.getPlayerState === 'function' && mp.getPlayerState() !== 1) {
+                    if (typeof mp.playVideo === 'function') mp.playVideo();
+                }
+            } catch (_) {}
         }
     }
 
@@ -4717,7 +4741,7 @@
         if (rate > 1.0 && isLiveVideo(v)) {
             const delay = getLiveDelay(v);
             if (delay !== null && delay <= 2.5) {
-                showToast('⚠️ At Live edge — Speed kept at 1× to prevent buffering');
+                showToast(`⚠️ Live edge: ${formatSpeed(1.0)}`);
                 return false;
             }
         }
@@ -5028,8 +5052,10 @@
 
         const msgStr = String(message).trim();
         // Modern indicator with cyan icon badge
-        if (/\d+(?:\.\d+)?\s*[×x]/i.test(msgStr)) {
-            videoHudEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(56,189,248,0.22);color:#38bdf8;font-size:11px;font-weight:800;line-height:1;">⚡</span><span style="font-weight:700;color:#f8fafc;letter-spacing:0.4px;">${msgStr}</span>`;
+        const speedMatch = msgStr.match(/(?:.*?)(?:(?:Playback\s*Speed:\s*)|(?:Speed:\s*)|(?:⚡\s*))?(\d+(?:\.\d+)?)\s*[×x]/i);
+        if (speedMatch) {
+            const cleanSpeed = formatSpeed(Number(speedMatch[1]));
+            videoHudEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(56,189,248,0.22);color:#38bdf8;font-size:11px;font-weight:800;line-height:1;">⚡</span><span style="font-weight:700;color:#f8fafc;letter-spacing:0.4px;">${cleanSpeed}</span>`;
         } else if (msgStr.includes('Volume')) {
             videoHudEl.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(56,189,248,0.22);color:#38bdf8;font-size:11px;line-height:1;">🔊</span><span style="font-weight:700;color:#f8fafc;">${msgStr.replace(/^[🔊🚀]\s*/, '')}</span>`;
         } else {
@@ -5470,7 +5496,7 @@
     }
 
     function formatGestureLabel(rate) {
-        return `Playback Speed: ${formatSpeed(rate)}`;
+        return formatSpeed(rate);
     }
 
     function startSpeedGesture() {
@@ -5567,6 +5593,65 @@
        Single-Finger & Mouse Hold-to-Boost + Rate Guard
        ========================================================= */
 
+    let holding2xStyleEl = null;
+
+    function ensureHolding2xStyle() {
+        if (holding2xStyleEl && holding2xStyleEl.isConnected) return;
+        holding2xStyleEl = document.createElement('style');
+        holding2xStyleEl.id = 'mvc-holding-2x-style';
+        holding2xStyleEl.textContent = `
+            html.mvc-holding-2x .ytp-chrome-bottom,
+            html.mvc-holding-2x .ytp-chrome-top,
+            html.mvc-holding-2x .ytp-gradient-bottom,
+            html.mvc-holding-2x .ytp-gradient-top,
+            html.mvc-holding-2x .ytp-progress-bar-container,
+            html.mvc-holding-2x .ytp-timed-markers-container,
+            html.mvc-holding-2x .ytp-scrubber-container,
+            html.mvc-holding-2x .vjs-control-bar,
+            html.mvc-holding-2x .jw-controls,
+            html.mvc-holding-2x .jw-controlbar,
+            html.mvc-holding-2x .plyr__controls,
+            html.mvc-holding-2x .art-controls,
+            html.mvc-holding-2x .art-bottom,
+            html.mvc-holding-2x [class*="control-bar" i],
+            html.mvc-holding-2x [class*="controls-bar" i],
+            html.mvc-holding-2x [class*="player-controls" i],
+            html.mvc-holding-2x [class*="video-controls" i],
+            html.mvc-holding-2x [class*="progress-bar" i],
+            html.mvc-holding-2x [class*="progress-container" i],
+            html.mvc-holding-2x [class*="seekbar" i],
+            html.mvc-holding-2x [class*="seek-bar" i],
+            html.mvc-holding-2x [class*="scrub" i],
+            html.mvc-holding-2x [class*="bottom-controls" i],
+            html.mvc-holding-2x [class*="media-controls" i] {
+                opacity: 0 !important;
+                visibility: hidden !important;
+                pointer-events: none !important;
+                transition: opacity 0.12s ease, visibility 0.12s ease !important;
+            }
+        `;
+        try {
+            (document.head || document.documentElement).appendChild(holding2xStyleEl);
+        } catch (_) {}
+    }
+
+    function applyHolding2xClass() {
+        ensureHolding2xStyle();
+        document.documentElement.classList.add('mvc-holding-2x');
+        if (isYouTubePage()) {
+            try {
+                const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                if (player) {
+                    player.classList.add('ytp-autohide');
+                }
+            } catch (_) {}
+        }
+    }
+
+    function removeHolding2xClass() {
+        document.documentElement.classList.remove('mvc-holding-2x');
+    }
+
     function cancelHoldBoostTimer() {
         if (holdBoostTimer) {
             clearTimeout(holdBoostTimer);
@@ -5591,9 +5676,11 @@
         temporaryBoostActive = true;
         temporaryBoostOriginalSpeed = holdBoostRestoreRate;
 
-        if (source === 'space' && target.paused) {
-            try { target.play(); } catch (_) {}
-        }
+        // Hide seekbars and player controls during 2x boost
+        applyHolding2xClass();
+
+        // Ensure video is playing!
+        ensureVideoPlaying(target);
 
         try {
             isInternalRateChange = true;
@@ -5601,15 +5688,16 @@
             setTimeout(() => { isInternalRateChange = false; }, 80);
         } catch (_) {}
 
-        showToast(`⚡ ${formatSpeed(rateToSet)} (hold)`);
+        showToast(formatSpeed(rateToSet));
         if (toolbarBuilt) syncToolbar();
     }
 
     function releaseTemporaryBoost(source = null) {
-        if (!holdBoostEngaged) return;
+        if (!holdBoostEngaged && !temporaryBoostActive) return;
         if (source && holdBoostSource && holdBoostSource !== source) return;
 
         cancelHoldBoostTimer();
+        armClickSuppression();
 
         const v = holdBoostVideo || getVideo();
         const restoreRate = holdBoostRestoreRate || persistentUserSpeed || 1.0;
@@ -5623,6 +5711,9 @@
         temporaryBoostActive = false;
         temporaryBoostOriginalSpeed = null;
 
+        // Restore seekbar and controls visibility
+        removeHolding2xClass();
+
         if (v && v.isConnected) {
             try {
                 isInternalRateChange = true;
@@ -5635,7 +5726,13 @@
             saveValue(siteKey('speed'), restoreRate);
             syncControlsToVideo();
             if (toolbarBuilt) syncToolbar();
-            showToast(`⚡ ${formatSpeed(restoreRate)}`);
+            showToast(formatSpeed(restoreRate));
+
+            // Guarantee video keeps playing and does NOT pause upon release!
+            ensureVideoPlaying(v);
+            setTimeout(() => {
+                if (v && v.isConnected) ensureVideoPlaying(v);
+            }, 60);
         }
     }
 
@@ -5730,41 +5827,55 @@
     }, { capture: true, passive: false });
 
     function releaseGesturePointerAndHoldBoost(e) {
-        if (e.pointerType === 'touch') {
+        if (e && e.pointerType === 'touch') {
             releaseGesturePointer(e);
         }
 
-        if (holdBoostPointerId === e.pointerId) {
-            cancelHoldBoostTimer();
-
-            if (holdBoostEngaged) {
-                armClickSuppression();
-                releaseTemporaryBoost(holdBoostSource);
-                lastTapTimestamp = 0;
-                if (e.cancelable) {
-                    try { e.preventDefault(); } catch (_) {}
-                }
-                try { e.stopPropagation(); } catch (_) {}
-            } else {
-                const heldDuration = performance.now() - holdBoostDownTime;
-                if (holdBoostStartPos) {
-                    const dx = e.clientX - holdBoostStartPos.x;
-                    const dy = e.clientY - holdBoostStartPos.y;
-                    if (heldDuration < 300 && Math.hypot(dx, dy) <= HOLD_MAX_MOVE_PX) {
-                        lastTapTimestamp = performance.now();
-                        lastTapX = e.clientX;
-                        lastTapY = e.clientY;
-                    } else {
-                        lastTapTimestamp = 0;
-                    }
-                }
-                abortHoldBoostCandidate();
+        // 1. If 2x hold boost was active via pointer or double-tap:
+        if (holdBoostEngaged && holdBoostSource !== 'space') {
+            armClickSuppression();
+            releaseTemporaryBoost();
+            lastTapTimestamp = 0;
+            if (e && e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
             }
+            try { e?.stopPropagation?.(); } catch (_) {}
+            try { e?.stopImmediatePropagation?.(); } catch (_) {}
+            return;
         }
+
+        // 2. Normal pointer candidate release
+        if (e && holdBoostPointerId === e.pointerId) {
+            cancelHoldBoostTimer();
+            const heldDuration = performance.now() - holdBoostDownTime;
+            if (holdBoostStartPos) {
+                const dx = e.clientX - holdBoostStartPos.x;
+                const dy = e.clientY - holdBoostStartPos.y;
+                if (heldDuration < 300 && Math.hypot(dx, dy) <= HOLD_MAX_MOVE_PX) {
+                    lastTapTimestamp = performance.now();
+                    lastTapX = e.clientX;
+                    lastTapY = e.clientY;
+                } else {
+                    lastTapTimestamp = 0;
+                }
+            }
+            abortHoldBoostCandidate();
+        }
+
+        if (e && e.pointerType === 'mouse') {
+            try { endMouseDrag(); } catch (_) {}
+        }
+        try { endRateGuardPress('pointerup-' + (e?.pointerType || 'pointer')); } catch (_) {}
     }
 
+    window.addEventListener('pointerup', releaseGesturePointerAndHoldBoost, true);
     document.addEventListener('pointerup', releaseGesturePointerAndHoldBoost, true);
+    window.addEventListener('pointercancel', releaseGesturePointerAndHoldBoost, true);
     document.addEventListener('pointercancel', releaseGesturePointerAndHoldBoost, true);
+    window.addEventListener('mouseup', releaseGesturePointerAndHoldBoost, true);
+    document.addEventListener('mouseup', releaseGesturePointerAndHoldBoost, true);
+    window.addEventListener('touchend', releaseGesturePointerAndHoldBoost, true);
+    document.addEventListener('touchend', releaseGesturePointerAndHoldBoost, true);
     window.addEventListener('blur', clearAllGesturePointers, true);
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) clearAllGesturePointers();
@@ -5776,23 +5887,38 @@
         clearTimeout(suppressClickTimer);
         suppressClickTimer = setTimeout(() => {
             suppressNextClick = false;
-        }, 400);
+        }, 500);
     }
 
-    document.addEventListener('click', e => {
+    function suppressClickEvent(e) {
         if (!suppressNextClick) return;
         suppressNextClick = false;
         clearTimeout(suppressClickTimer);
-        try { e.preventDefault(); } catch (_) {}
-        try { e.stopPropagation(); } catch (_) {}
-        try { e.stopImmediatePropagation(); } catch (_) {}
-    }, true);
+        if (e && e.cancelable) {
+            try { e.preventDefault(); } catch (_) {}
+        }
+        try { e?.stopPropagation?.(); } catch (_) {}
+        try { e?.stopImmediatePropagation?.(); } catch (_) {}
+    }
 
+    window.addEventListener('click', suppressClickEvent, true);
+    document.addEventListener('click', suppressClickEvent, true);
+    window.addEventListener('mouseup', e => {
+        if (suppressNextClick) {
+            if (e && e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e?.stopPropagation?.(); } catch (_) {}
+            try { e?.stopImmediatePropagation?.(); } catch (_) {}
+        }
+    }, true);
     document.addEventListener('mouseup', e => {
         if (suppressNextClick) {
-            try { e.preventDefault(); } catch (_) {}
-            try { e.stopPropagation(); } catch (_) {}
-            try { e.stopImmediatePropagation(); } catch (_) {}
+            if (e && e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e?.stopPropagation?.(); } catch (_) {}
+            try { e?.stopImmediatePropagation?.(); } catch (_) {}
         }
     }, true);
 
@@ -5997,50 +6123,16 @@
         releaseTemporaryBoost();
     }
 
-    window.addEventListener('pointerup', e => {
-        checkTemporaryBoostRelease();
-        cancelHoldBoostTimer();
-        if (holdBoostEngaged) {
-            releaseHoldBoost();
-        } else {
-            abortHoldBoostCandidate();
-        }
-        if (e.pointerType === 'mouse') {
-            try { endMouseDrag(); } catch (_) {}
-        }
-        try { endRateGuardPress('pointerup-' + e.pointerType); } catch (_) {}
-    }, true);
-
-    window.addEventListener('mouseup', () => {
-        checkTemporaryBoostRelease();
-        cancelHoldBoostTimer();
-        if (holdBoostEngaged) {
-            releaseHoldBoost();
-        } else {
-            abortHoldBoostCandidate();
-        }
-        try { endMouseDrag(); } catch (_) {}
-        try { endRateGuardPress('mouseup'); } catch (_) {}
-    }, true);
-
-    window.addEventListener('touchend', () => {
-        checkTemporaryBoostRelease();
-        cancelHoldBoostTimer();
-        if (holdBoostEngaged) {
-            releaseHoldBoost();
-        } else {
-            abortHoldBoostCandidate();
-        }
-        try { endRateGuardPress('touchend'); } catch (_) {}
-    }, true);
-
     window.addEventListener('pointermove', e => {
         if (e.pointerType === 'mouse' && (e.buttons & 1) === 0) {
-            cancelHoldBoostTimer();
-            if (holdBoostEngaged) {
-                releaseHoldBoost();
-            } else {
-                abortHoldBoostCandidate();
+            if (holdBoostSource !== 'space') {
+                cancelHoldBoostTimer();
+                if (holdBoostEngaged) {
+                    armClickSuppression();
+                    releaseHoldBoost();
+                } else {
+                    abortHoldBoostCandidate();
+                }
             }
             if (mouseDragActive || mouseDragEngaged) {
                 try { endMouseDrag(); } catch (_) {}
@@ -6229,44 +6321,49 @@
 
     window.addEventListener('keyup', e => {
         if (isSpaceKey(e)) {
+            const heldDuration = performance.now() - spaceDownTime;
             if (spaceHoldTimer) {
                 clearTimeout(spaceHoldTimer);
                 spaceHoldTimer = null;
             }
 
-            if (holdBoostEngaged && holdBoostSource === 'space') {
+            const wasBoosted = (holdBoostEngaged && holdBoostSource === 'space') || spaceBoostEverEngaged || (temporaryBoostActive && holdBoostSource === 'space');
+            spaceBoostEverEngaged = false;
+            spaceKeyIntercepted = false;
+
+            if (wasBoosted) {
                 // Spacebar hold boost was active: restore original speed and NEVER pause the video!
                 releaseTemporaryBoost('space');
-                spaceKeyIntercepted = false;
+                const v = spaceTargetVideo || getVideo() || document.querySelector('video');
                 spaceTargetVideo = null;
-                try { e.preventDefault(); } catch (_) {}
+                ensureVideoPlaying(v);
+                setTimeout(() => { ensureVideoPlaying(v); }, 60);
+
+                if (e.cancelable) {
+                    try { e.preventDefault(); } catch (_) {}
+                }
                 try { e.stopPropagation(); } catch (_) {}
                 try { e.stopImmediatePropagation(); } catch (_) {}
                 return;
             }
 
             // Quick tap (< 220ms): cleanly toggle play/pause
-            const heldDuration = performance.now() - spaceDownTime;
-            if (spaceKeyIntercepted || heldDuration < 280) {
-                spaceKeyIntercepted = false;
+            if (heldDuration < SPACE_HOLD_DELAY_MS) {
                 const v = spaceTargetVideo || getVideo() || document.querySelector('video');
                 spaceTargetVideo = null;
                 if (v) {
                     togglePlayPause(v);
                 }
-                try { e.preventDefault(); } catch (_) {}
-                try { e.stopPropagation(); } catch (_) {}
-                try { e.stopImmediatePropagation(); } catch (_) {}
-                return;
+            } else {
+                spaceTargetVideo = null;
             }
 
-            checkTemporaryBoostRelease();
-            if (spaceKeyIntercepted) {
-                spaceKeyIntercepted = false;
+            if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
-                try { e.stopPropagation(); } catch (_) {}
-                try { e.stopImmediatePropagation(); } catch (_) {}
             }
+            try { e.stopPropagation(); } catch (_) {}
+            try { e.stopImmediatePropagation(); } catch (_) {}
+            return;
         }
     }, { capture: true });
 
@@ -6351,6 +6448,7 @@
                         clearTimeout(spaceHoldTimer);
                         spaceHoldTimer = null;
                     }
+                    spaceBoostEverEngaged = true;
                     engageTemporaryBoost(v, 'space', 2.0);
                 }
                 return;
@@ -6359,6 +6457,7 @@
             // First press down: start hold-to-2x timer (220ms)
             spaceDownTime = performance.now();
             spaceTargetVideo = v;
+            spaceBoostEverEngaged = false;
             if (spaceHoldTimer) {
                 clearTimeout(spaceHoldTimer);
             }
@@ -6366,6 +6465,7 @@
                 spaceHoldTimer = null;
                 const target = spaceTargetVideo || getVideo() || v;
                 if (target) {
+                    spaceBoostEverEngaged = true;
                     engageTemporaryBoost(target, 'space', 2.0);
                 }
             }, SPACE_HOLD_DELAY_MS);
