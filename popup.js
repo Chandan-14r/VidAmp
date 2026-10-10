@@ -193,6 +193,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initFilterReset();
 
     // Player
+    await bindCheckbox('side-tab-toggle', 'sideTabEnabled', false);
     await bindCheckbox('show-toolbar-toggle', 'showToolbar', false);
     await bindCheckbox('smart-miniplayer-toggle', 'smartMiniplayerEnabled', false);
 

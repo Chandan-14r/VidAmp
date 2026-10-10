@@ -157,6 +157,7 @@
         pinned: Boolean(loadValue('pinned', false)),
         manualPos: Boolean(loadValue('manualPos', false)),
         showToolbar: false, // Default: toolbar is strictly on-demand, only shown when clicking the VidAmp side dropdown
+        sideTabEnabled: Boolean(loadValue('sideTabEnabled', false)), // Floating tab is disabled by default so it never obstructs video buttons
 
         // Enhanced feature flags & settings
         trackpadSpeedEnabled: loadValue('trackpadSpeedEnabled', true) !== false,
@@ -4331,6 +4332,11 @@
         if (!sideTabBuilt || !sideTabBtn) return;
         const open = typeof forceOpen === 'boolean' ? forceOpen : Boolean(prefs.showToolbar);
         sideTabBtn.classList.toggle('active', open);
+        if (open) {
+            sideTabBtn.classList.remove('idle');
+        } else {
+            sideTabBtn.classList.add('idle');
+        }
         const arrow = sideTabBtn.querySelector('.side-arrow');
         if (arrow) {
             arrow.textContent = open ? '▴' : '▾';
@@ -4341,6 +4347,13 @@
         if (window.self !== window.top) return;
         if (!sideTabBuilt || !sideTabHost || !sideTabBtn) return;
         if (isDraggingSideTab) return;
+
+        // If user disabled the floating tab, completely hide it
+        if (!prefs.sideTabEnabled) {
+            sideTabHost.classList.remove('visible');
+            sideTabHost.style.setProperty('display', 'none', 'important');
+            return;
+        }
 
         const isFullscreen = Boolean(
             document.fullscreenElement ||
@@ -4366,7 +4379,7 @@
             return;
         }
 
-        const tabWidth = (sideTabBtn.offsetWidth > 0) ? sideTabBtn.offsetWidth : 96;
+        const tabWidth = (sideTabBtn.offsetWidth > 0) ? sideTabBtn.offsetWidth : 106;
         const tabHeight = (sideTabBtn.offsetHeight > 0) ? sideTabBtn.offsetHeight : 28;
 
         if (sideTabCustomPos && typeof sideTabCustomPos.left === 'number') {
@@ -4387,8 +4400,8 @@
             const effectiveTop = Math.min(rect.top, cRect.top);
             const effectiveRight = Math.max(rect.right, cRect.right);
 
-            const defaultLeft = effectiveRight - tabWidth - 6;
-            const defaultTop = effectiveTop + 4;
+            const defaultLeft = effectiveRight - tabWidth - 8;
+            const defaultTop = effectiveTop + 6;
 
             const clampedLeft = Math.max(4, Math.min(window.innerWidth - tabWidth - 4, defaultLeft));
             const clampedTop = Math.max(4, Math.min(window.innerHeight - tabHeight - 4, defaultTop));
@@ -4407,22 +4420,39 @@
         updateSideTabState();
     }
 
-    function resetSideTabIdle() {
-        if (!sideTabBuilt || !sideTabBtn) return;
+    function resetSideTabIdle(e) {
+        if (!prefs.sideTabEnabled || !sideTabBuilt || !sideTabBtn) return;
+        const v = getVideo();
+        if (!v) return;
+
+        const container = findTruePlayerContainer(v) || v;
+        const rect = container.getBoundingClientRect();
+
+        // If mouse is outside the video player container, keep idle/hidden
+        if (e && (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)) {
+            if (!prefs.showToolbar) {
+                sideTabBtn.classList.add('idle');
+            }
+            return;
+        }
+
+        // Only wake up if mouse is in the upper 25% of the player
+        const inUpperZone = e && (e.clientY <= rect.top + Math.max(90, rect.height * 0.25));
+        if (!inUpperZone && !prefs.showToolbar && !sideTabBtn.matches(':hover')) {
+            sideTabBtn.classList.add('idle');
+            return;
+        }
+
         sideTabBtn.classList.remove('idle');
         clearTimeout(sideTabIdleTimer);
-        // Dim/vanish when toolbar is closed and idle so it never obstructs viewing
         if (!prefs.showToolbar) {
             sideTabIdleTimer = setTimeout(() => {
                 if (sideTabBtn && !sideTabBtn.matches(':hover') && !sideTabBtn.classList.contains('active')) {
                     sideTabBtn.classList.add('idle');
                 }
-            }, 2500);
+            }, 1800);
         }
     }
-
-    window.addEventListener('mousemove', resetSideTabIdle, { passive: true });
-    window.addEventListener('pointermove', resetSideTabIdle, { passive: true });
 
     function buildSideTab() {
         if (window.self !== window.top) return;
@@ -4448,50 +4478,56 @@
             :host(.visible) {
                 display: block !important;
             }
-            #mvc-side-dropdown {
+            #mvc-side-container {
                 all: unset;
                 box-sizing: border-box;
                 display: inline-flex;
                 align-items: center;
-                gap: 5px;
-                padding: 5px 11px;
-                background: rgba(16, 16, 22, 0.84);
+                gap: 2px;
+                padding: 3px 5px 3px 9px;
+                background: rgba(16, 16, 22, 0.88);
                 border: 1px solid rgba(255, 255, 255, 0.18);
                 border-radius: 20px;
                 backdrop-filter: blur(14px);
                 -webkit-backdrop-filter: blur(14px);
                 box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
                 color: #e2e2e8;
-                font-size: 11.5px;
-                font-weight: 600;
-                line-height: 1;
-                cursor: pointer;
                 user-select: none;
                 pointer-events: auto;
                 transition: opacity 0.25s ease, transform 0.18s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-                opacity: 0.7;
+                opacity: 0.85;
             }
-            #mvc-side-dropdown:hover {
+            #mvc-side-container:hover {
                 opacity: 1 !important;
                 background: rgba(24, 24, 34, 0.94);
                 border-color: rgba(76, 154, 255, 0.65);
                 box-shadow: 0 6px 22px rgba(0, 0, 0, 0.6), 0 0 10px rgba(76, 154, 255, 0.25);
-                transform: scale(1.05);
             }
-            #mvc-side-dropdown:active {
-                transform: scale(0.95);
-            }
-            #mvc-side-dropdown.active {
+            #mvc-side-container.active {
                 opacity: 1 !important;
                 background: rgba(18, 28, 48, 0.94);
                 border-color: #4c9aff;
                 color: #4c9aff;
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 12px rgba(76, 154, 255, 0.4);
             }
-            #mvc-side-dropdown.idle:not(.active):not(:hover) {
+            #mvc-side-container.idle:not(.active):not(:hover) {
                 opacity: 0 !important;
                 pointer-events: none !important;
                 transform: translateY(-4px) scale(0.95);
+            }
+            #mvc-side-dropdown {
+                all: unset;
+                box-sizing: border-box;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                cursor: pointer;
+                font-size: 11.5px;
+                font-weight: 600;
+                line-height: 1;
+            }
+            #mvc-side-dropdown:active {
+                transform: scale(0.96);
             }
             .side-badge {
                 font-size: 12px;
@@ -4508,21 +4544,50 @@
                 transition: transform 0.25s ease;
                 display: inline-block;
             }
-            #mvc-side-dropdown.active .side-arrow {
+            #mvc-side-container.active .side-arrow {
                 transform: rotate(180deg);
+            }
+            #mvc-side-close {
+                all: unset;
+                box-sizing: border-box;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 17px;
+                height: 17px;
+                border-radius: 50%;
+                color: rgba(255, 255, 255, 0.5);
+                font-size: 13px;
+                line-height: 1;
+                cursor: pointer;
+                margin-left: 2px;
+                transition: background 0.15s, color 0.15s;
+            }
+            #mvc-side-close:hover {
+                background: rgba(255, 255, 255, 0.15);
+                color: #ff6b6b;
             }
         `;
         sideTabShadow.appendChild(style);
 
+        const container = document.createElement('div');
+        container.id = 'mvc-side-container';
+
         const btn = document.createElement('button');
         btn.id = 'mvc-side-dropdown';
         btn.setAttribute('aria-label', 'Toggle VidAmp video controls');
-        btn.title = 'VidAmp Video Controls (Click to toggle, Alt+T)';
+        btn.title = 'VidAmp Video Controls (Click to toggle toolbar, Alt+T)';
         btn.innerHTML = `
             <span class="side-badge">⚡</span>
             <span class="side-text">VidAmp</span>
             <span class="side-arrow">▾</span>
         `;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.id = 'mvc-side-close';
+        closeBtn.setAttribute('aria-label', 'Hide VidAmp tab');
+        closeBtn.title = 'Hide this tab (Press Alt+T to toggle toolbar, or re-enable in extension popup)';
+        closeBtn.textContent = '×';
 
         btn.onclick = e => {
             if (e) {
@@ -4532,9 +4597,23 @@
             toggleToolbarVisibility();
         };
 
+        closeBtn.onclick = e => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            prefs.sideTabEnabled = false;
+            saveValue('sideTabEnabled', false);
+            if (sideTabHost) {
+                sideTabHost.classList.remove('visible');
+                sideTabHost.style.setProperty('display', 'none', 'important');
+            }
+            showToast('🚫 VidAmp tab hidden (Re-enable in extension popup or press Alt+T)');
+        };
+
         // Drag to reposition anywhere
-        btn.addEventListener('pointerdown', e => {
-            if (e.button !== 0) return;
+        container.addEventListener('pointerdown', e => {
+            if (e.button !== 0 || e.target === closeBtn) return;
             isDraggingSideTab = true;
             const curLeft = sideTabHost.offsetLeft || 0;
             const curTop = sideTabHost.offsetTop || 0;
@@ -4549,8 +4628,8 @@
                 if (!isDraggingSideTab || !sideTabDragStart) return;
                 const dx = moveEvt.clientX - sideTabDragStart.mouseX;
                 const dy = moveEvt.clientY - sideTabDragStart.mouseY;
-                const newLeft = Math.max(4, Math.min(window.innerWidth - btn.offsetWidth - 4, sideTabDragStart.hostX + dx));
-                const newTop = Math.max(4, Math.min(window.innerHeight - btn.offsetHeight - 4, sideTabDragStart.hostY + dy));
+                const newLeft = Math.max(4, Math.min(window.innerWidth - container.offsetWidth - 4, sideTabDragStart.hostX + dx));
+                const newTop = Math.max(4, Math.min(window.innerHeight - container.offsetHeight - 4, sideTabDragStart.hostY + dy));
 
                 sideTabCustomPos = { left: newLeft, top: newTop };
                 sideTabHost.style.setProperty('left', `${Math.round(newLeft)}px`, 'important');
@@ -4575,16 +4654,22 @@
             showToast('📍 VidAmp tab reset to default');
         });
 
-        sideTabShadow.appendChild(btn);
-        sideTabBtn = btn;
+        container.appendChild(btn);
+        container.appendChild(closeBtn);
+        sideTabShadow.appendChild(container);
+        sideTabBtn = container;
 
         body.appendChild(sideTabHost);
         sideTabBuilt = true;
         updateSideTabState();
         if (!prefs.showToolbar) {
-            btn.classList.add('idle');
+            container.classList.add('idle');
         }
-        positionSideTab();
+        if (!prefs.sideTabEnabled) {
+            sideTabHost.style.setProperty('display', 'none', 'important');
+        } else {
+            positionSideTab();
+        }
     }
 
     // Hook toolbar & side tab into resize and scroll
@@ -6551,6 +6636,17 @@
                             toolbarHost.setAttribute('hidden', '');
                             toolbarHost.style.setProperty('display', 'none', 'important');
                             toolbarHost.style.setProperty('visibility', 'hidden', 'important');
+                        }
+                    }
+                } else if (key === 'sideTabEnabled') {
+                    prefs.sideTabEnabled = change.newValue === true;
+                    if (sideTabHost) {
+                        if (prefs.sideTabEnabled) {
+                            sideTabHost.style.removeProperty('display');
+                            positionSideTab();
+                        } else {
+                            sideTabHost.style.setProperty('display', 'none', 'important');
+                            sideTabHost.classList.remove('visible');
                         }
                     }
                 } else if (key === 'trackpadSpeedEnabled') {
