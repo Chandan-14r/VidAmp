@@ -1,0 +1,38 @@
+{
+  "name": "vidamp",
+  "version": "6.2.0",
+  "description": "VidAmp: Universal Video Enhancer & Speed Controller for Chrome, Edge, Brave, Firefox, Opera, and Arc.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "vite build",
+    "package": "python build_packages.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chandan-14r/VidAmp.git"
+  },
+  "keywords": [
+    "video-speed-controller",
+    "web-audio",
+    "youtube-enhancer",
+    "trackpad-gestures",
+    "ambient-glow",
+    "chrome-extension",
+    "firefox-addon"
+  ],
+  "author": "Chandan-14r",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Chandan-14r/VidAmp/issues"
+  },
+  "homepage": "https://github.com/Chandan-14r/VidAmp#readme",
+  "devDependencies": {
+    "@types/chrome": "^0.3.5",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  }
+}

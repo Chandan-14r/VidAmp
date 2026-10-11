@@ -1,17 +1,17 @@
 /* =========================================================
-   Ultimate Video Controller v6.0 — Production Chrome Extension
+   VidAmp — Universal Video Enhancer & Speed Controller
    Architecture:
-   - ActiveVideoManager (robust multi-video & YouTube SPA tracking)
+   - ActiveVideoManager (multi-video & YouTube SPA tracking)
    - InputManager & Keyboard Shortcuts (editable-element protection)
    - GestureManager (trackpad pinch, touch 2-finger drag, hold-to-boost, rate-guard)
    - GestureZoneManager (left brightness, right volume, center safe zone)
-   - AudioController (Web Audio API volume boost up to 200%, lazy context)
+   - AudioController (Web Audio API volume boost up to 600%, dynamics limiter, studio EQ)
    - FilterController (non-destructive CSS brightness, contrast, saturate)
    - LoopManager (full loop & A/B segment repeat)
    - ScreenshotManager (timestamped canvas capture, PNG/JPEG, CORS resilient)
    - MiniplayerManager (smart scroll-away miniplayer with YouTube conflict avoidance)
    - OverlayManager (unified top-center feedback toast)
-   - UIController (draggable, adaptive docking shadow DOM panel)
+   - UIController (draggable, adaptive docking shadow DOM panel & below-video toolbar)
    - SettingsManager (chrome.storage.local sync, live tab updates)
    ========================================================= */
 
@@ -28,9 +28,9 @@
     }
 
     const DEBUG = false;
-    const dbg = (...args) => { if (DEBUG) console.info('[MVC]', ...args); };
+    const dbg = (...args) => { if (DEBUG) console.info('[VidAmp]', ...args); };
 
-    dbg('Ultimate Video Controller v6.0 initializing on:', location.hostname);
+    dbg('VidAmp initializing on:', location.hostname);
 
     /* =========================================================
        Constants & Defaults
@@ -6933,7 +6933,7 @@
             token: rateGuardToken,
             sawBoost: false
         };
-        dbg('[MVC][guard] pressed — recorded rate', rateGuard.rate);
+        dbg('[guard] pressed — recorded rate', rateGuard.rate);
     }, true);
 
     function enforceRateGuard(why) {
@@ -6947,7 +6947,7 @@
         dismissYouTubeSpeedmasterOverlay();
 
         if (Math.abs(Number(v.playbackRate) - g.rate) > 0.01) {
-            dbg('[MVC][guard] restoring', g.rate, 'was', v.playbackRate, 'via', why);
+            dbg('[guard] restoring', g.rate, 'was', v.playbackRate, 'via', why);
             try {
                 v.playbackRate = g.rate;
             } catch (_) {}
@@ -6966,7 +6966,7 @@
         const g = rateGuard;
         if (!g || g.phase !== 'pressed') return;
         const held = performance.now() - g.downAt;
-        dbg('[MVC][guard] real release via', reason, 'after', Math.round(held), 'ms', 'sawBoost:', g.sawBoost);
+        dbg('[guard] real release via', reason, 'after', Math.round(held), 'ms', 'sawBoost:', g.sawBoost);
 
         if (held < RATE_GUARD_MIN_HOLD_MS && !g.sawBoost) {
             rateGuard = null;
@@ -6982,7 +6982,7 @@
 
         setTimeout(() => {
             if (rateGuard === g) {
-                dbg('[MVC][guard] window over');
+                dbg('[guard] window over');
                 rateGuard = null;
             }
         }, RATE_GUARD_WINDOW_MS);
