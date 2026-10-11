@@ -49,7 +49,7 @@
     // Gesture constants
     const DEFAULT_GESTURE_THRESHOLD = 14;
     const DEFAULT_GESTURE_SENSITIVITY = 55;
-    const GESTURE_AXIS = 'Y';
+    const GESTURE_AXIS = 'X';
     const GESTURE_DIRECTION = 1;
     const TRACKPAD_GESTURE_COOLDOWN_MS = 350;
 
@@ -6478,7 +6478,7 @@
     }, { capture: true, passive: false });
 
     document.addEventListener('touchmove', e => {
-        if (gesturePointers.size === 2 && gestureVideo) {
+        if (gesturePointers.size === 2 && gestureVideo && gestureEngaged) {
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
@@ -6890,7 +6890,7 @@
         const dir = prefs.gestureReverse ? -1 : 1;
         const isDiscrete = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 80;
 
-        // Modifier Key: Shift + Wheel = Volume adjustment
+        // Modifier Key 1: Shift + Wheel = Sound / Volume adjustment (0–20 scale & super volume boost)
         if (e.shiftKey) {
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
@@ -6906,29 +6906,61 @@
             return;
         }
 
-        // Two-Finger Gesture (Vertical up/down, Horizontal left/right, or Pinch) directly over video player:
-        // Adjusts speed with frictionless, smooth precision!
-        let travel = 0;
-        if (e.ctrlKey) {
-            // Touchpad pinch-to-zoom gesture
-            travel = -e.deltaY * dir;
-        } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && Math.abs(e.deltaX) > 4) {
-            // Horizontal two-finger swipe (right = up, left = down)
-            travel = e.deltaX * dir;
-        } else if (Math.abs(e.deltaY) > 0) {
-            // Standard vertical two-finger swipe (up = speed up, down = speed down) or mouse wheel
-            travel = -e.deltaY * dir;
-        }
-
-        if (travel !== 0) {
+        // Modifier Key 2: Alt + Wheel = Video Controls (Left Brightness / Right Volume, or Speed)
+        if (e.altKey) {
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
             try { e.stopPropagation(); } catch (_) {}
 
-            handleSpeedWheelStep(target, travel, isDiscrete);
+            if (prefs.gestureZonesEnabled) {
+                const rect = target.getBoundingClientRect();
+                const isLeftHalf = (e.clientX - rect.left) < (rect.width / 2);
+                if (isLeftHalf) {
+                    const step = (-e.deltaY * dir) > 0 ? 5 : -5;
+                    const newB = Math.max(10, Math.min(200, (prefs.brightness || 100) + step));
+                    prefs.brightness = newB;
+                    saveValue(siteKey('brightness'), newB);
+                    applyVideoFilters(target);
+                    showToast(`☀️ Brightness: ${newB}%`);
+                } else {
+                    const dirUp = (-e.deltaY * dir) > 0;
+                    if (dirUp) stepUpSound(target);
+                    else stepDownSound(target);
+                }
+            } else {
+                handleSpeedWheelStep(target, -e.deltaY * dir, isDiscrete);
+            }
             return;
         }
+
+        // Two-Finger Pinch (ctrlKey + wheel): adjusts speed smoothly on laptop trackpad
+        if (e.ctrlKey) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+
+            handleSpeedWheelStep(target, -e.deltaY * dir, false);
+            return;
+        }
+
+        // Horizontal Two-Finger Swipe (Left / Right swipe over video):
+        // Controls speed with smooth precision without hijacking vertical page scrolling!
+        if (Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && Math.abs(e.deltaX) > 4) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+            try { e.stopPropagation(); } catch (_) {}
+
+            const travel = e.deltaX * dir;
+            handleSpeedWheelStep(target, travel, false);
+            return;
+        }
+
+        // CRITICAL: Standard two-finger vertical scrolling (up / down) is NEVER hijacked!
+        // When moving up and down with 2 fingers, the browser scrolls the page/feed/comments completely naturally.
+        // The speed overlay will NEVER appear, speed will NOT change, and page scrolling is 100% smooth!
     }, { capture: true, passive: false });
 
     /* =========================================================
