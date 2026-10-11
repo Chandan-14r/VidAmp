@@ -325,6 +325,11 @@
     }
 
     function findVideos() {
+        if (isYouTubePage()) {
+            const ytMain = findYouTubeMainVideo();
+            if (ytMain) return [ytMain];
+        }
+
         const all = queryVideos(document).filter(isVisible);
 
         const scored = all
@@ -333,12 +338,7 @@
             .sort((a, b) => b.score - a.score)
             .map(x => x.v);
 
-        const ranked = scored.length ? scored : all;
-        const ytMain = findYouTubeMainVideo();
-        if (ytMain) {
-            return [ytMain, ...ranked.filter(v => v !== ytMain)];
-        }
-        return ranked;
+        return scored.length ? scored : all;
     }
 
     /* =========================================================
@@ -530,6 +530,7 @@
 
     // === Speed Authority & Anti-Drift State ===
     let isInternalRateChange = false;
+    let isInternalVolumeChange = false;
     let accumulatedPinchDelta = 0;
     let trackpadPinchTimer = null;
     let lastTrackpadGestureTime = 0;
@@ -1042,40 +1043,38 @@
         prefs.volume = effectiveVol;
         saveValue(siteKey('volume'), effectiveVol);
 
-        if (effectiveVol <= 1.0) {
-            // Normal volume (0–20 scale)
-            prefs.loudBoostActive = false;
-            try { v.volume = effectiveVol; } catch (_) {}
-            const entry = audioNodes.get(v);
-            if (entry) {
-                updateGainAndLimiter(entry, 1.0);
-            }
-            if (notify) {
-                showToast(formatSoundLabel(effectiveVol, false));
-            }
-        } else {
-            // Loud Boost active (> 100% up to 600%)
-            prefs.loudBoostActive = true;
-            try { v.volume = 1.0; } catch (_) {}
-            const entry = getOrCreateAudioBoostNode(v);
-            if (entry) {
-                updateGainAndLimiter(entry, effectiveVol);
+        isInternalVolumeChange = true;
+        try {
+            if (effectiveVol <= 1.0) {
+                // Normal volume (0–20 scale)
+                prefs.loudBoostActive = false;
+                try { v.volume = effectiveVol; } catch (_) {}
+                const entry = audioNodes.get(v);
+                if (entry) {
+                    updateGainAndLimiter(entry, 1.0);
+                }
                 if (notify) {
                     showToast(formatSoundLabel(effectiveVol, false));
                 }
             } else {
-                // If Web Audio blocked, stay at 100%
+                // Loud Boost active (> 100% up to 600%)
+                prefs.loudBoostActive = true;
                 try { v.volume = 1.0; } catch (_) {}
-                if (notify) {
-                    showToast('🔊 Sound: 20/20');
+                const entry = getOrCreateAudioBoostNode(v);
+                if (entry) {
+                    updateGainAndLimiter(entry, effectiveVol);
+                    if (notify) {
+                        showToast(formatSoundLabel(effectiveVol, false));
+                    }
+                } else {
+                    // If Web Audio blocked, stay at 100%
+                    try { v.volume = 1.0; } catch (_) {}
+                    if (notify) {
+                        showToast('🔊 Sound: 20/20');
+                    }
                 }
             }
-        }
 
-        // If volume > 0 and video is muted, unmute immediately!
-        if (effectiveVol > 0 && (v.muted || prefs.muted || isVideoMuted(v))) {
-            unmuteVideo(v, effectiveVol);
-        } else {
             // Sync YouTube player volume
             if (isYouTubePage()) {
                 try {
@@ -1085,9 +1084,14 @@
                     }
                 } catch (_) {}
             }
-            try {
-                v.dispatchEvent(new Event('volumechange', { bubbles: true }));
-            } catch (_) {}
+
+            // Only unmute if user EXPLICITLY triggered a volume action (notify === true)
+            // NEVER auto-unmute on background startup sync to avoid triggering Chrome autoplay blocking/buffering!
+            if (notify && effectiveVol > 0 && (v.muted || prefs.muted || isVideoMuted(v))) {
+                unmuteVideo(v, effectiveVol);
+            }
+        } finally {
+            setTimeout(() => { isInternalVolumeChange = false; }, 80);
         }
 
         syncControlsToVideo();
@@ -1935,30 +1939,25 @@
     function applySitePreferences(v) {
         if (!v || !v.isConnected) return;
 
-        // 1. Only restore custom speed if user configured a non-1x speed and video is already playing
+        // 1. Only restore custom speed if user configured a non-1x speed and video has started playing
         try {
-            if (validSpeed(prefs.speed) && prefs.speed !== 1.0 && !v.paused && v.readyState >= 2) {
-                v.playbackRate = prefs.speed;
+            if (validSpeed(prefs.speed) && prefs.speed !== 1.0 && !v.paused && v.readyState >= 3) {
+                if (Math.abs(Number(v.playbackRate) - prefs.speed) > 0.01) {
+                    v.playbackRate = prefs.speed;
+                }
             }
         } catch (_) {}
 
-        // 2. Normal volume (0.0 to 1.0) - purely native v.volume!
-        // NEVER attach Web Audio createMediaElementSource on auto-load!
-        try {
-            if (Number.isFinite(prefs.volume) && prefs.volume >= 0 && prefs.volume <= 1.0) {
-                v.volume = prefs.volume;
-            }
-        } catch (_) {}
+        // 2. Purely non-intrusive: NEVER tamper with v.volume or v.muted on video discovery/startup!
+        // The browser and media player manage their own native volume and autoplay policy.
+        // VidAmp only adjusts volume when the user explicitly interacts with VidAmp controls.
 
-        // 3. NEVER force v.muted on discovery!
-        // Movie streaming players require initial muted = true to satisfy Chrome Autoplay Policy.
-
-        // 4. Video Filters (safe pure CSS)
+        // 3. Video Filters (safe pure CSS)
         try {
             applyVideoFilters(v);
         } catch (_) {}
 
-        if (toolbarBuilt) syncToolbar();
+        if (toolbarBuilt) syncToolbar(v);
     }
 
     let isRefreshingVideos = false;
@@ -2116,12 +2115,17 @@
         } catch (_) {}
     }
 
+    let lastListenerVideo = null;
     function attachVideoListeners(v) {
+        if (!v) return;
+        if (v === lastListenerVideo && videoAbortController && !videoAbortController.signal.aborted) {
+            return;
+        }
+        lastListenerVideo = v;
+
         if (videoAbortController) {
             try { videoAbortController.abort(); } catch (_) {}
         }
-
-        if (!v) return;
 
         videoAbortController = new AbortController();
         const { signal } = videoAbortController;
@@ -2139,7 +2143,9 @@
             'seeked'
         ].forEach(evt => {
             v.addEventListener(evt, () => {
-                syncControlsToVideo();
+                if (panelBuilt && panel && panel.classList.contains('visible')) {
+                    syncControlsToVideo();
+                }
                 if (evt === 'timeupdate') {
                     handleLoopTimeUpdate(v);
                     checkLiveStreamCatchUp(v);
@@ -2150,14 +2156,15 @@
         });
 
         v.addEventListener('volumechange', () => {
+            if (isInternalVolumeChange) return;
             if (prefs.volume <= 1.0) {
                 prefs.volume = Number(v.volume) || 0;
-                saveValue(siteKey('volume'), prefs.volume);
             }
             prefs.muted = Boolean(v.muted);
-            saveValue(siteKey('muted'), prefs.muted);
-            syncControlsToVideo();
-            if (toolbarBuilt) syncToolbar();
+            if (panelBuilt && panel && panel.classList.contains('visible')) {
+                syncControlsToVideo();
+            }
+            if (toolbarBuilt) syncToolbar(v);
         }, { signal });
 
         v.addEventListener('ratechange', () => {
@@ -3283,6 +3290,7 @@
             }
 
             panel.classList.add('visible');
+            syncControlsToVideo();
             clearTimeout(hideTimer);
 
             if (prefs.pinned) return;
@@ -4897,19 +4905,6 @@
             }
         }
 
-        // Lightweight hooks on navigation and player updates instead of scanning entire DOM tree
-        ['yt-navigate-finish', 'yt-page-data-updated', 'spfdone'].forEach(evt => {
-            document.addEventListener(evt, () => {
-                setTimeout(() => {
-                    tryMountYouTubeToolbar();
-                    if (sideTabBuilt) positionSideTab();
-                }, 150);
-                setTimeout(() => {
-                    tryMountYouTubeToolbar();
-                    if (sideTabBuilt) positionSideTab();
-                }, 600);
-            }, { passive: true });
-        });
     }
 
     // Cinema Mode: dims everything except the video
@@ -5462,7 +5457,7 @@
     }
 
     function syncControlsToVideo() {
-        if (!panelBuilt || !video) return;
+        if (!panelBuilt || !video || !panel || !panel.classList.contains('visible')) return;
 
         playBtn.textContent = video.paused ? '▶️' : '⏸️';
         playBtn.setAttribute('aria-label', video.paused ? 'Play video' : 'Pause video');
@@ -5968,35 +5963,12 @@
         });
     }
 
-    document.addEventListener('pointerover', e => {
-        const target = getVideoFromEvent(e);
-        if (!target || !isVisible(target)) return;
-
+    let lastActiveVideo = null;
+    function setupActiveVideo(target) {
+        if (!target || !(target instanceof HTMLVideoElement) || !target.isConnected) return;
+        if (target === lastActiveVideo && video === target) return;
+        lastActiveVideo = target;
         preferredVideo = target;
-        const idx = videos.indexOf(target);
-
-        if (idx !== -1 && video !== target) {
-            videoIndex = idx;
-            video = target;
-            attachVideoListeners(video);
-            applySitePreferences(video);
-            syncControlsToVideo();
-            updateVideoCounter();
-            setupSmartMiniplayer();
-
-            if (!prefs.manualPos && panelBuilt) {
-                positionPanelSmartly(true, lastPointer);
-            }
-        }
-    }, true);
-
-    document.addEventListener('play', e => {
-        const target = e.target;
-        if (!(target instanceof HTMLVideoElement)) return;
-        if (!isYouTubePage() && !isVisible(target)) return;
-
-        preferredVideo = target;
-        if (!panelBuilt) buildPanel();
 
         const idx = videos.indexOf(target);
         if (idx !== -1 && video !== target) {
@@ -6011,13 +5983,25 @@
         video = target;
         attachVideoListeners(video);
         applySitePreferences(video);
-        syncControlsToVideo();
+        if (panelBuilt && panel && panel.classList.contains('visible')) {
+            syncControlsToVideo();
+        }
         updateVideoCounter();
         setupSmartMiniplayer();
+        if (toolbarBuilt) syncToolbar(video);
+    }
 
-        if (!prefs.manualPos) {
-            positionPanelSmartly(true, lastPointer);
-        }
+    document.addEventListener('pointerover', e => {
+        const target = getVideoFromEvent(e);
+        if (!target || !isVisible(target)) return;
+        setupActiveVideo(target);
+    }, true);
+
+    document.addEventListener('play', e => {
+        const target = e.target;
+        if (!(target instanceof HTMLVideoElement)) return;
+        if (!isYouTubePage() && !isVisible(target)) return;
+        setupActiveVideo(target);
     }, true);
 
     document.addEventListener('pointermove', e => {
@@ -7559,7 +7543,10 @@
                         setPlaybackRate(video, spd, false);
                     }
                 } else if (key === siteKey('volume') && video) {
-                    applyVolumeAndBoost(video, Number(change.newValue), false);
+                    const newVol = Number(change.newValue);
+                    if (!isInternalVolumeChange && Number.isFinite(newVol) && Math.abs(prefs.volume - newVol) > 0.01) {
+                        applyVolumeAndBoost(video, newVol, false);
+                    }
                 } else if (key === siteKey('brightness') && video) {
                     prefs.brightness = Number(change.newValue) || 100;
                     applyVideoFilters(video);
@@ -7586,10 +7573,13 @@
         }, 600);
     }
 
+    let navRefreshTimer = null;
     function refreshAfterNavigation() {
+        if (navRefreshTimer) clearTimeout(navRefreshTimer);
         preferredVideo = null;
         video = null;
-        videoIndex = 0;
+        lastActiveVideo = null;
+        lastListenerVideo = null;
         loopA = null;
         loopB = null;
 
@@ -7598,53 +7588,31 @@
             updateLoopMarkers();
         }
 
-        requestAnimationFrame(() => {
+        navRefreshTimer = setTimeout(() => {
+            navRefreshTimer = null;
             refreshVideos({ resetIndex: true });
             checkAutoTheater();
             if (toolbarBuilt) mountToolbarInPage();
-        });
-
-        setTimeout(() => {
-            refreshVideos({ resetIndex: true });
-            if (toolbarBuilt) mountToolbarInPage();
-        }, 250);
-        setTimeout(() => {
-            refreshVideos({ resetIndex: true });
-            if (toolbarBuilt) mountToolbarInPage();
-        }, 900);
+            if (sideTabBuilt) positionSideTab();
+        }, 120);
     }
 
     if (isYouTubePage()) {
         ['yt-navigate-finish', 'yt-page-data-updated', 'spfdone'].forEach(evt => {
-            document.addEventListener(evt, refreshAfterNavigation, true);
+            document.addEventListener(evt, refreshAfterNavigation, { passive: true });
         });
 
         ['loadedmetadata', 'canplay', 'playing'].forEach(evt => {
             document.addEventListener(evt, e => {
                 if (!(e.target instanceof HTMLVideoElement)) return;
-
                 const yt = findYouTubeMainVideo();
-                if (!yt || e.target !== yt) return;
-
-                preferredVideo = yt;
-                video = yt;
-
-                if (!videos.includes(yt)) {
-                    videos = [yt, ...videos.filter(item => item !== yt)];
+                if (yt && e.target === yt) {
+                    setupActiveVideo(yt);
                 }
-                videoIndex = 0;
-
-                if (!panelBuilt) buildPanel();
-
-                attachVideoListeners(yt);
-                applySitePreferences(yt);
-                syncControlsToVideo();
-                updateVideoCounter();
-                setupSmartMiniplayer();
             }, true);
         });
 
-        window.addEventListener('popstate', refreshAfterNavigation, true);
+        window.addEventListener('popstate', refreshAfterNavigation, { passive: true });
 
         let lastYTVideo = null;
         setInterval(() => {
@@ -7653,22 +7621,18 @@
                 if (lastYTVideo && video === lastYTVideo) {
                     preferredVideo = null;
                     video = null;
+                    lastActiveVideo = null;
                 }
                 lastYTVideo = null;
                 return;
             }
 
-            if (ytVideo !== lastYTVideo || ytVideo !== video) {
+            if (ytVideo !== lastYTVideo) {
                 lastYTVideo = ytVideo;
                 preferredVideo = ytVideo;
-                refreshVideos({ resetIndex: true });
+                setupActiveVideo(ytVideo);
             }
-
-            if (!panelBuilt && document.documentElement) {
-                buildPanel();
-                syncControlsToVideo();
-            }
-        }, 700);
+        }, 800);
     }
 
     /* =========================================================
