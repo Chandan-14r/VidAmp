@@ -187,9 +187,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     await bindCheckbox('auto-theater-toggle', 'autoTheater', false);
 
     // Audio & Video
-    await bindCheckbox('volume-boost-toggle', 'volumeBoostEnabled', true);
-    await bindCheckbox('bass-boost-toggle', 'bassBoostEnabled', false);
-    await bindCheckbox('vocal-boost-toggle', 'vocalBoostEnabled', false);
+    await bindSelect('audio-preset-select', 'audioPreset', 'normal', false);
+    await bindCheckbox('mono-audio-toggle', 'monoAudioActive', false);
     await bindCheckbox('ambient-glow-toggle', 'ambientGlowEnabled', false);
     await bindSelect('screenshot-format-select', 'screenshotFormat', 'png', false);
     await initFilterReset();

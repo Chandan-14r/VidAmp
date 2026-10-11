@@ -186,6 +186,8 @@
         smartMiniplayerEnabled: Boolean(loadValue('smartMiniplayerEnabled', false)),
         screenshotFormat: loadValue('screenshotFormat', 'png') === 'jpeg' ? 'jpeg' : 'png',
         autoTheater: Boolean(loadValue('autoTheater', false)),
+        audioPreset: loadValue('audioPreset', 'normal') || 'normal',
+        monoAudioActive: Boolean(loadValue('monoAudioActive', false)),
 
         // Filter values (per session/site)
         brightness: Number(loadValue(siteKey('brightness'), 100)) || 100,
@@ -497,9 +499,11 @@
     let sideTabDragStart = null;
     let sideTabIdleTimer = null;
 
-    // === Audio FX State (Bass Boost & Vocal Clarity) ===
-    let bassBoostActive = false;
-    let vocalBoostActive = false;
+    // === Audio FX State (Presets, Limiter & Mono Audio) ===
+    let currentAudioPreset = prefs.audioPreset || 'normal';
+    let monoAudioActive = Boolean(prefs.monoAudioActive);
+    let bassBoostActive = currentAudioPreset === 'bass';
+    let vocalBoostActive = currentAudioPreset === 'vocal';
 
     // === Universal Ambient Glow State ===
     let ambientGlowActive = false;
@@ -532,10 +536,79 @@
     let trackpadGestureStreak = 0;
 
     /* =========================================================
-       Audio Controller (Lazy Web Audio API Volume Boost & EQ)
+       Audio Controller (Studio EQ Presets, Limiter & Super Boost)
        ========================================================= */
 
-    const audioNodes = new WeakMap(); // HTMLMediaElement -> { ctx, source, gain, bassFilter, vocalFilter }
+    const AUDIO_PRESETS = {
+        normal: {
+            id: 'normal',
+            name: 'Normal (Flat)',
+            icon: '🎵',
+            bassGain: 0,
+            vocalGain: 0,
+            trebleGain: 0,
+            compThreshold: -8,
+            compRatio: 12,
+            compKnee: 10
+        },
+        vocal: {
+            id: 'vocal',
+            name: 'Vocal Clarity',
+            icon: '🎙️',
+            bassGain: -2.5,
+            vocalGain: 7.0,
+            trebleGain: 2.0,
+            compThreshold: -12,
+            compRatio: 10,
+            compKnee: 12
+        },
+        bass: {
+            id: 'bass',
+            name: 'Bass Boost Max',
+            icon: '💥',
+            bassGain: 8.5,
+            vocalGain: -1.0,
+            trebleGain: 1.0,
+            compThreshold: -8,
+            compRatio: 12,
+            compKnee: 14
+        },
+        music: {
+            id: 'music',
+            name: 'Music Master',
+            icon: '🎧',
+            bassGain: 4.5,
+            vocalGain: 1.0,
+            trebleGain: 4.0,
+            compThreshold: -6,
+            compRatio: 6,
+            compKnee: 10
+        },
+        night: {
+            id: 'night',
+            name: 'Night Mode (Volume Leveler)',
+            icon: '🌙',
+            bassGain: -3.0,
+            vocalGain: 5.0,
+            trebleGain: -1.5,
+            compThreshold: -26,
+            compRatio: 16,
+            compKnee: 25
+        },
+        cinema: {
+            id: 'cinema',
+            name: 'Cinema Surround',
+            icon: '🎬',
+            bassGain: 6.0,
+            vocalGain: 3.0,
+            trebleGain: 5.0,
+            compThreshold: -10,
+            compRatio: 10,
+            compKnee: 14
+        }
+    };
+
+    const audioNodes = new WeakMap(); // HTMLMediaElement -> { ctx, source, gain, bassFilter, vocalFilter, trebleFilter, compressor }
 
     function getOrCreateAudioBoostNode(v) {
         if (!v) return null;
@@ -554,37 +627,42 @@
             const ctx = new AudioCtx();
             const source = ctx.createMediaElementSource(v);
 
-            // BiquadFilter: Low-shelf for Bass Boost
+            // BiquadFilter: Low-shelf for Bass Boost (120Hz)
             const bassFilter = ctx.createBiquadFilter();
             bassFilter.type = 'lowshelf';
-            bassFilter.frequency.value = 140;
-            bassFilter.gain.value = bassBoostActive ? 7.0 : 0.0;
+            bassFilter.frequency.value = 120;
 
-            // BiquadFilter: Peaking for Vocal Clarity / Dialogue Boost
+            // BiquadFilter: Peaking for Vocal Clarity / Speech (2400Hz)
             const vocalFilter = ctx.createBiquadFilter();
             vocalFilter.type = 'peaking';
             vocalFilter.frequency.value = 2400;
             vocalFilter.Q.value = 1.0;
-            vocalFilter.gain.value = vocalBoostActive ? 6.0 : 0.0;
 
+            // BiquadFilter: High-shelf for Treble Presence / Air (7500Hz)
+            const trebleFilter = ctx.createBiquadFilter();
+            trebleFilter.type = 'highshelf';
+            trebleFilter.frequency.value = 7500;
+
+            // Gain node for clean boost (1.0 to 6.0)
             const gain = ctx.createGain();
-            gain.gain.value = 1.0;
+            gain.gain.value = prefs.volume > 1.0 ? prefs.volume : 1.0;
 
-            // Compressor / Limiter: Keeps loud boost clean and free of digital distortion
+            // Dynamics Compressor / Limiter: prevents harsh digital clipping at high boost
             let compressor = null;
             if (typeof ctx.createDynamicsCompressor === 'function') {
                 compressor = ctx.createDynamicsCompressor();
-                compressor.threshold.value = -6;
-                compressor.knee.value = 10;
+                compressor.threshold.value = -8;
+                compressor.knee.value = 12;
                 compressor.ratio.value = 12;
                 compressor.attack.value = 0.003;
                 compressor.release.value = 0.25;
             }
 
-            // Chain: source -> bassFilter -> vocalFilter -> gain -> (compressor) -> ctx.destination
+            // Routing Chain: source -> bassFilter -> vocalFilter -> trebleFilter -> gain -> (compressor) -> destination
             source.connect(bassFilter);
             bassFilter.connect(vocalFilter);
-            vocalFilter.connect(gain);
+            vocalFilter.connect(trebleFilter);
+            trebleFilter.connect(gain);
             if (compressor) {
                 gain.connect(compressor);
                 compressor.connect(ctx.destination);
@@ -592,8 +670,18 @@
                 gain.connect(ctx.destination);
             }
 
-            entry = { ctx, source, gain, bassFilter, vocalFilter, compressor };
+            if (monoAudioActive && ctx.destination) {
+                try {
+                    ctx.destination.channelCount = 1;
+                    ctx.destination.channelCountMode = 'explicit';
+                } catch (_) {}
+            }
+
+            entry = { ctx, source, gain, bassFilter, vocalFilter, trebleFilter, compressor };
             audioNodes.set(v, entry);
+
+            // Apply active preset parameters
+            applyPresetToNodeEntry(entry, AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal);
 
             if (ctx.state === 'suspended') {
                 ctx.resume().catch(() => {});
@@ -605,11 +693,73 @@
         }
     }
 
+    function applyPresetToNodeEntry(entry, preset) {
+        if (!entry || !preset) return;
+        const now = entry.ctx.currentTime || 0;
+        try {
+            if (entry.bassFilter) entry.bassFilter.gain.setTargetAtTime(preset.bassGain || 0, now, 0.02);
+            if (entry.vocalFilter) entry.vocalFilter.gain.setTargetAtTime(preset.vocalGain || 0, now, 0.02);
+            if (entry.trebleFilter) entry.trebleFilter.gain.setTargetAtTime(preset.trebleGain || 0, now, 0.02);
+            if (entry.compressor) {
+                entry.compressor.threshold.setTargetAtTime(preset.compThreshold || -8, now, 0.02);
+                entry.compressor.ratio.setTargetAtTime(preset.compRatio || 12, now, 0.02);
+                entry.compressor.knee.setTargetAtTime(preset.compKnee || 10, now, 0.02);
+            }
+        } catch (_) {
+            try {
+                if (entry.bassFilter) entry.bassFilter.gain.value = preset.bassGain || 0;
+                if (entry.vocalFilter) entry.vocalFilter.gain.value = preset.vocalGain || 0;
+                if (entry.trebleFilter) entry.trebleFilter.gain.value = preset.trebleGain || 0;
+                if (entry.compressor) {
+                    entry.compressor.threshold.value = preset.compThreshold || -8;
+                    entry.compressor.ratio.value = preset.compRatio || 12;
+                    entry.compressor.knee.value = preset.compKnee || 10;
+                }
+            } catch (_) {}
+        }
+    }
+
+    function updateGainAndLimiter(entry, vol) {
+        if (!entry) return;
+        const now = entry.ctx.currentTime || 0;
+        const effectiveGain = vol > 1.0 ? vol : 1.0;
+        try {
+            entry.gain.gain.setTargetAtTime(effectiveGain, now, 0.02);
+        } catch (_) {
+            entry.gain.gain.value = effectiveGain;
+        }
+
+        if (entry.compressor) {
+            const currentPresetObj = AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal;
+            let targetThreshold = currentPresetObj.compThreshold;
+            let targetRatio = currentPresetObj.compRatio;
+
+            // Adaptive limiter scaling for ultra loud boosts (300% to 600%)
+            if (vol > 3.0) {
+                targetThreshold = Math.min(targetThreshold, -16);
+                targetRatio = Math.max(targetRatio, 16);
+            } else if (vol > 2.0) {
+                targetThreshold = Math.min(targetThreshold, -12);
+                targetRatio = Math.max(targetRatio, 14);
+            }
+
+            try {
+                entry.compressor.threshold.setTargetAtTime(targetThreshold, now, 0.02);
+                entry.compressor.ratio.setTargetAtTime(targetRatio, now, 0.02);
+            } catch (_) {
+                entry.compressor.threshold.value = targetThreshold;
+                entry.compressor.ratio.value = targetRatio;
+            }
+        }
+    }
+
     /* =========================================================
-       Sound Scale (0–20) & Loud Boost System
+       Sound Scale (0–20) & Continuous Boost Ladder (100%–600%)
        ========================================================= */
 
     const MAX_SOUND_STEP = 20;
+    const MAX_BOOST = 6.0; // Up to 600% super volume boost
+    const BOOST_LADDER = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0];
     let savedNormalVolume = 1.0;
 
     function volumeToSoundStep(vol) {
@@ -627,7 +777,13 @@
             return '🔇 Sound: 0/20';
         }
         if (vol > 1.0) {
-            return `🚀 Loud Boost: ${Math.round(vol * 100)}%`;
+            const pct = Math.round(vol * 100);
+            if (pct >= 500) {
+                return `⚡ Ultra Boost: ${pct}% (MAX)`;
+            } else if (pct >= 250) {
+                return `🔥 Super Boost: ${pct}%`;
+            }
+            return `🚀 Loud Boost: ${pct}%`;
         }
         const step = volumeToSoundStep(vol);
         return `🔊 Sound: ${step}/20`;
@@ -637,36 +793,26 @@
         if (!v) v = getVideo() || document.querySelector('video');
         if (!v) return;
 
-        const isCurrentlyBoosted = prefs.volume > 1.0 || Boolean(prefs.loudBoostActive);
-
-        if (isCurrentlyBoosted) {
-            // Restore previous normal sound level (clamped to 0.05 - 1.0)
-            prefs.loudBoostActive = false;
-            const restoreVol = Math.max(0.05, Math.min(1.0, savedNormalVolume || 1.0));
-            applyVolumeAndBoost(v, restoreVol, false);
-            const step = volumeToSoundStep(restoreVol);
-            showToast(`🔊 Sound: ${step}/20`);
-        } else {
-            // Boost loudly to 200% (2x maximum volume)
-            if (prefs.volume > 0 && prefs.volume <= 1.0) {
-                savedNormalVolume = prefs.volume;
-            } else {
-                savedNormalVolume = 1.0;
-            }
-            prefs.loudBoostActive = true;
-            prefs.volumeBoostEnabled = true;
-
-            if (isVideoMuted(v)) {
-                unmuteVideo(v, 2.0);
-            } else {
-                applyVolumeAndBoost(v, 2.0, false);
-            }
-
-            showToast('🚀 Loud Boost: ON (200%)');
+        if (isVideoMuted(v)) {
+            unmuteVideo(v, 2.0);
+            showToast('🚀 Loud Boost: 200%');
+            return;
         }
 
-        syncControlsToVideo();
-        if (toolbarBuilt) syncToolbar();
+        // Turbo cycle: Normal -> 200% -> 300% -> 600% -> Normal
+        if (prefs.volume <= 1.0) {
+            if (prefs.volume > 0) savedNormalVolume = prefs.volume;
+            applyVolumeAndBoost(v, 2.0, true);
+        } else if (prefs.volume >= 1.9 && prefs.volume < 2.5) {
+            applyVolumeAndBoost(v, 3.0, true);
+        } else if (prefs.volume >= 2.5 && prefs.volume < 5.5) {
+            applyVolumeAndBoost(v, 6.0, true);
+        } else {
+            // Restore previous normal sound level
+            prefs.loudBoostActive = false;
+            const restoreVol = Math.max(0.05, Math.min(1.0, savedNormalVolume || 1.0));
+            applyVolumeAndBoost(v, restoreVol, true);
+        }
     }
 
     function stepUpSound(v) {
@@ -681,17 +827,19 @@
             return;
         }
 
-        if (prefs.volume > 1.0) {
-            // Loud Boost mode: allow fine-tuning boost up to 200%
-            const nextVol = Math.min(2.0, Math.round((prefs.volume + 0.1) * 10) / 10);
-            applyVolumeAndBoost(v, nextVol, true);
-            return;
+        if (prefs.volume < 1.0) {
+            const curStep = volumeToSoundStep(prefs.volume);
+            if (curStep < MAX_SOUND_STEP) {
+                const nextStep = curStep + 1;
+                const targetVol = soundStepToVolume(nextStep);
+                applyVolumeAndBoost(v, targetVol, true);
+                return;
+            }
         }
 
-        const curStep = volumeToSoundStep(prefs.volume);
-        const nextStep = Math.min(MAX_SOUND_STEP, curStep + 1);
-        const targetVol = soundStepToVolume(nextStep);
-        applyVolumeAndBoost(v, targetVol, true);
+        // Stepping up at or above 1.0 (20/20) continues seamlessly into boost ladder up to 600%
+        const nextVol = BOOST_LADDER.find(lvl => lvl > prefs.volume + 0.005) || MAX_BOOST;
+        applyVolumeAndBoost(v, nextVol, true);
     }
 
     function stepDownSound(v) {
@@ -699,9 +847,13 @@
         if (!v) return;
 
         if (prefs.volume > 1.0) {
-            // Drop back from loud boost to standard 20/20 (100%)
-            prefs.loudBoostActive = false;
-            applyVolumeAndBoost(v, 1.0, true);
+            const prevVol = [...BOOST_LADDER].reverse().find(lvl => lvl < prefs.volume - 0.005) || 1.0;
+            if (prevVol <= 1.0) {
+                prefs.loudBoostActive = false;
+                applyVolumeAndBoost(v, 1.0, true);
+            } else {
+                applyVolumeAndBoost(v, prevVol, true);
+            }
             return;
         }
 
@@ -771,7 +923,7 @@
                 vol = soundStepToVolume(1); // Starts steadily from 1 (1/20 = 5%)
             }
         }
-        vol = Math.max(0.05, Math.min(prefs.volumeBoostEnabled ? 2.0 : 1.0, vol));
+        vol = Math.max(0.05, Math.min(MAX_BOOST, vol));
 
         prefs.muted = false;
         prefs.volume = vol;
@@ -784,14 +936,14 @@
             try { v.volume = vol; } catch (_) {}
             const entry = audioNodes.get(v);
             if (entry) {
-                try { entry.gain.gain.value = 1.0; } catch (_) {}
+                updateGainAndLimiter(entry, 1.0);
             }
         } else {
             prefs.loudBoostActive = true;
             try { v.volume = 1.0; } catch (_) {}
             const entry = getOrCreateAudioBoostNode(v);
             if (entry) {
-                try { entry.gain.gain.value = vol; } catch (_) {}
+                updateGainAndLimiter(entry, vol);
             }
         }
 
@@ -886,7 +1038,7 @@
     function applyVolumeAndBoost(v, volumeLevel, notify = false) {
         if (!v) return;
 
-        const effectiveVol = Math.max(0, Math.min(prefs.volumeBoostEnabled ? 2.0 : 1.0, volumeLevel));
+        const effectiveVol = Math.max(0, Math.min(MAX_BOOST, volumeLevel));
         prefs.volume = effectiveVol;
         saveValue(siteKey('volume'), effectiveVol);
 
@@ -896,20 +1048,20 @@
             try { v.volume = effectiveVol; } catch (_) {}
             const entry = audioNodes.get(v);
             if (entry) {
-                try { entry.gain.gain.value = 1.0; } catch (_) {}
+                updateGainAndLimiter(entry, 1.0);
             }
             if (notify) {
                 showToast(formatSoundLabel(effectiveVol, false));
             }
         } else {
-            // Loud Boost active (> 100%)
+            // Loud Boost active (> 100% up to 600%)
             prefs.loudBoostActive = true;
             try { v.volume = 1.0; } catch (_) {}
             const entry = getOrCreateAudioBoostNode(v);
             if (entry) {
-                try { entry.gain.gain.value = effectiveVol; } catch (_) {}
+                updateGainAndLimiter(entry, effectiveVol);
                 if (notify) {
-                    showToast(`🚀 Loud Boost: ${Math.round(effectiveVol * 100)}%`);
+                    showToast(formatSoundLabel(effectiveVol, false));
                 }
             } else {
                 // If Web Audio blocked, stay at 100%
@@ -942,30 +1094,73 @@
         if (toolbarBuilt) syncToolbar();
     }
 
+    function applyAudioPreset(presetKey, notify = true) {
+        if (!AUDIO_PRESETS[presetKey]) presetKey = 'normal';
+        currentAudioPreset = presetKey;
+        prefs.audioPreset = presetKey;
+        saveValue('audioPreset', presetKey);
+
+        bassBoostActive = presetKey === 'bass';
+        vocalBoostActive = presetKey === 'vocal';
+
+        const preset = AUDIO_PRESETS[presetKey];
+        const v = getVideo();
+        if (v) {
+            const entry = getOrCreateAudioBoostNode(v);
+            if (entry) {
+                applyPresetToNodeEntry(entry, preset);
+            }
+        }
+        if (notify) {
+            showToast(`${preset.icon} Audio Preset: ${preset.name}`);
+        }
+        syncControlsToVideo();
+        if (toolbarBuilt) syncToolbar();
+    }
+
+    function cycleAudioPreset(v) {
+        const keys = Object.keys(AUDIO_PRESETS);
+        const curIdx = keys.indexOf(currentAudioPreset);
+        const nextIdx = (curIdx + 1) % keys.length;
+        applyAudioPreset(keys[nextIdx], true);
+    }
+
+    function toggleMonoAudio(v) {
+        monoAudioActive = !monoAudioActive;
+        prefs.monoAudioActive = monoAudioActive;
+        saveValue('monoAudioActive', monoAudioActive);
+
+        if (!v) v = getVideo();
+        if (v) {
+            const entry = getOrCreateAudioBoostNode(v);
+            if (entry && entry.ctx && entry.ctx.destination) {
+                try {
+                    entry.ctx.destination.channelCount = monoAudioActive ? 1 : 2;
+                    entry.ctx.destination.channelCountMode = 'explicit';
+                } catch (_) {}
+            }
+        }
+        showToast(monoAudioActive ? '🎧 Mono Audio: ON (Summed L+R)' : '🎧 Stereo Audio: ON');
+        syncControlsToVideo();
+        if (toolbarBuilt) syncToolbar();
+    }
+
     function toggleBassBoost(v) {
         if (!v) v = getVideo();
-        if (!v) return;
-        bassBoostActive = !bassBoostActive;
-        const entry = getOrCreateAudioBoostNode(v);
-        if (entry && entry.bassFilter) {
-            entry.bassFilter.gain.value = bassBoostActive ? 7.0 : 0.0;
+        if (currentAudioPreset === 'bass') {
+            applyAudioPreset('normal', true);
+        } else {
+            applyAudioPreset('bass', true);
         }
-        showToast(bassBoostActive ? '🔊 Bass Boost: ON (+7dB)' : '🔊 Bass Boost: OFF');
-        if (toolbarBuilt) syncToolbar();
-        syncControlsToVideo();
     }
 
     function toggleVocalBoost(v) {
         if (!v) v = getVideo();
-        if (!v) return;
-        vocalBoostActive = !vocalBoostActive;
-        const entry = getOrCreateAudioBoostNode(v);
-        if (entry && entry.vocalFilter) {
-            entry.vocalFilter.gain.value = vocalBoostActive ? 6.0 : 0.0;
+        if (currentAudioPreset === 'vocal') {
+            applyAudioPreset('normal', true);
+        } else {
+            applyAudioPreset('vocal', true);
         }
-        showToast(vocalBoostActive ? '🎙️ Vocal Clarity: ON (+6dB)' : '🎙️ Vocal Clarity: OFF');
-        if (toolbarBuilt) syncToolbar();
-        syncControlsToVideo();
     }
 
     /* =========================================================
@@ -2898,14 +3093,19 @@
                     <div id="volume-row">
                         <button id="mute" class="hud-btn" type="button" title="Mute (M)" style="width:34px; height:28px; padding:0;">🔊</button>
                         <input id="volume" type="range" min="0" max="20" step="1" value="20" aria-label="Sound level (0-20)">
-                        <span id="volume-val" style="font-size:12px; font-weight:700; color:#e0e0e0; min-width:42px; text-align:right;">20/20</span>
+                        <span id="volume-val" style="font-size:12px; font-weight:700; color:#e0e0e0; min-width:48px; text-align:right;">20/20</span>
                     </div>
                     <div class="grid-3">
-                        <button id="panel-loudboost" class="hud-btn" type="button" title="Loud Sound Boost (B)">🚀 Boost (B)</button>
-                        <button id="panel-bass" class="hud-btn" type="button" title="Bass Boost (+7dB low-shelf)">🔊 Bass</button>
-                        <button id="panel-vocal" class="hud-btn" type="button" title="Vocal Clarity (+6dB speech peak)">🎙️ Vocals</button>
+                        <button id="panel-loudboost" class="hud-btn" type="button" title="Turbo Loud Boost (B: 200% / 300% / 600%)">🚀 Boost (B)</button>
+                        <button id="panel-preset" class="hud-btn" type="button" title="Audio Equalizer Preset (V)">🎵 Preset (V)</button>
+                        <button id="panel-mono" class="hud-btn" type="button" title="Mono Audio Toggle (Shift + M)">🎧 Mono</button>
                     </div>
-                    <div class="grid-2">
+                    <div class="grid-3" style="margin-top: 4px;">
+                        <button id="panel-boost-200" class="hud-btn hud-pill" type="button" title="Set Loud Boost to 200%" style="font-size:11px; padding:4px 2px;">⚡ 200%</button>
+                        <button id="panel-boost-300" class="hud-btn hud-pill" type="button" title="Set Super Boost to 300%" style="font-size:11px; padding:4px 2px;">🔥 300%</button>
+                        <button id="panel-boost-600" class="hud-btn hud-pill" type="button" title="Set Ultra Boost to 600% (MAX)" style="font-size:11px; padding:4px 2px;">⚡ 600%</button>
+                    </div>
+                    <div class="grid-2" style="margin-top: 4px;">
                         <button id="pip" class="hud-btn" type="button" title="Picture-in-Picture (P)">🖼️ PiP</button>
                         <button id="fullscreen" class="hud-btn" type="button" title="Fullscreen (F)" aria-label="Enter fullscreen">⛶ Fullscreen</button>
                     </div>
@@ -3370,6 +3570,11 @@
         setLoopBBtn.onclick = setPointB;
         clearLoopABBtn.onclick = clearLoopAB;
 
+        const panelPresetBtn = $('#panel-preset');
+        const panelMonoBtn = $('#panel-mono');
+        const panelBoost200 = $('#panel-boost-200');
+        const panelBoost300 = $('#panel-boost-300');
+        const panelBoost600 = $('#panel-boost-600');
         const panelBassBtn = $('#panel-bass');
         const panelVocalBtn = $('#panel-vocal');
         const loopClipBtn = $('#loop-clip');
@@ -3380,6 +3585,31 @@
         const panelBookmarkBtn = $('#panel-bookmark');
         const panelSleepBtn = $('#panel-sleep');
 
+        if (panelPresetBtn) {
+            panelPresetBtn.onclick = () => {
+                cycleAudioPreset(getVideo());
+            };
+        }
+        if (panelMonoBtn) {
+            panelMonoBtn.onclick = () => {
+                toggleMonoAudio(getVideo());
+            };
+        }
+        if (panelBoost200) {
+            panelBoost200.onclick = () => {
+                applyVolumeAndBoost(getVideo(), 2.0, true);
+            };
+        }
+        if (panelBoost300) {
+            panelBoost300.onclick = () => {
+                applyVolumeAndBoost(getVideo(), 3.0, true);
+            };
+        }
+        if (panelBoost600) {
+            panelBoost600.onclick = () => {
+                applyVolumeAndBoost(getVideo(), 6.0, true);
+            };
+        }
         if (panelBassBtn) {
             panelBassBtn.onclick = () => {
                 const v = getVideo();
@@ -3961,8 +4191,8 @@
 
         // Buttons
         const btnLoop       = btn('loop', 'loop', 'Loop whole video');
-        const btnVolBoost   = btn('volboost', 'volumeBoost', 'Loud Sound Boost (B)');
-        const btnBass       = btn('bass', 'bass', 'Bass & Vocal EQ (Click: Bass +7dB, Right-Click: Vocal +6dB)');
+        const btnVolBoost   = btn('volboost', 'volumeBoost', 'Turbo Loud Boost (B: 200% / 300% / 600%)');
+        const btnBass       = btn('bass', 'bass', 'Audio Presets (Click/V: Cycle Presets, Right-Click: Mono Audio)');
         const btnCinema     = btn('cinema', 'cinema', 'Cinema Mode (Dim lights)');
         const btnAmbient    = btn('ambient', 'ambient', 'Universal Ambient Glow (Bias Lighting)');
         const btnTheater    = btn('theater', 'theater', 'Theater Mode / Resize Player');
@@ -4114,11 +4344,11 @@
             toggleMute(getVideo());
         };
 
-        btnBass.onclick = () => toggleBassBoost(getVideo());
+        btnBass.onclick = () => cycleAudioPreset(getVideo());
         btnBass.oncontextmenu = e => {
             e.preventDefault();
             e.stopPropagation();
-            toggleVocalBoost(getVideo());
+            toggleMonoAudio(getVideo());
         };
 
         btnCinema.onclick = () => toggleCinemaMode();
@@ -4244,21 +4474,20 @@
         if (volB) {
             const isBoosted = prefs.volume > 1.0 || Boolean(prefs.loudBoostActive);
             volB.classList.toggle('active', isBoosted);
-            volB.title = isBoosted ? 'Loud Sound Boost Active (Click or B to restore)' : 'Loud Sound Boost (B)';
+            if (isBoosted) {
+                const pct = Math.round(prefs.volume * 100);
+                volB.title = `Turbo Boost: ${pct}% (Click or B to cycle, R-Click to mute)`;
+            } else {
+                volB.title = 'Turbo Loud Boost (B: 200% / 300% / 600%)';
+            }
         }
 
         const bassB = tbShadow.querySelector('#tb-bass');
         if (bassB) {
-            bassB.classList.toggle('active-violet', bassBoostActive || vocalBoostActive);
-            if (bassBoostActive && vocalBoostActive) {
-                bassB.title = 'Bass (+7dB) & Vocal (+6dB) Active';
-            } else if (bassBoostActive) {
-                bassB.title = 'Bass Boost Active (+7dB)';
-            } else if (vocalBoostActive) {
-                bassB.title = 'Vocal Clarity Active (+6dB)';
-            } else {
-                bassB.title = 'Bass & Vocal EQ (Click: Bass +7dB, Right-Click: Vocal +6dB)';
-            }
+            const isCustom = currentAudioPreset !== 'normal' || monoAudioActive;
+            bassB.classList.toggle('active-violet', isCustom);
+            const p = AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal;
+            bassB.title = `Audio Preset: ${p.name}${monoAudioActive ? ' [Mono ON]' : ''} (Click or V to cycle, R-Click for Mono Audio)`;
         }
 
         const cinB = tbShadow.querySelector('#tb-cinema');
@@ -5250,7 +5479,8 @@
         const volValEl = shadow.querySelector('#volume-val');
         if (volValEl) {
             if (prefs.volume > 1.0) {
-                volValEl.textContent = '🚀 ' + Math.round(prefs.volume * 100) + '%';
+                const pct = Math.round(prefs.volume * 100);
+                volValEl.textContent = (pct >= 500 ? '⚡ ' : (pct >= 250 ? '🔥 ' : '🚀 ')) + pct + '%';
             } else if (video.muted || prefs.muted || prefs.volume <= 0) {
                 volValEl.textContent = '0/20';
             } else {
@@ -5259,7 +5489,37 @@
         }
         muteBtn.textContent = video.muted || prefs.muted || prefs.volume === 0 ? '🔇' : (prefs.volume > 1.0 ? '🚀' : '🔊');
         const panelLoudB = shadow.querySelector('#panel-loudboost');
-        if (panelLoudB) panelLoudB.classList.toggle('active', prefs.volume > 1.0 || Boolean(prefs.loudBoostActive));
+        if (panelLoudB) {
+            panelLoudB.classList.toggle('active', prefs.volume > 1.0 || Boolean(prefs.loudBoostActive));
+            if (prefs.volume > 1.0) {
+                panelLoudB.textContent = `🚀 ${Math.round(prefs.volume * 100)}%`;
+            } else {
+                panelLoudB.textContent = '🚀 Boost (B)';
+            }
+        }
+
+        const pill200 = shadow.querySelector('#panel-boost-200');
+        if (pill200) pill200.classList.toggle('active', Math.abs(prefs.volume - 2.0) < 0.05);
+
+        const pill300 = shadow.querySelector('#panel-boost-300');
+        if (pill300) pill300.classList.toggle('active', Math.abs(prefs.volume - 3.0) < 0.05);
+
+        const pill600 = shadow.querySelector('#panel-boost-600');
+        if (pill600) pill600.classList.toggle('active', Math.abs(prefs.volume - 6.0) < 0.05);
+
+        const panelPresetBtn = shadow.querySelector('#panel-preset');
+        if (panelPresetBtn) {
+            const p = AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal;
+            panelPresetBtn.textContent = `${p.icon} ${p.name.split(' ')[0]}`;
+            panelPresetBtn.classList.toggle('active', currentAudioPreset !== 'normal');
+            panelPresetBtn.title = `Audio Preset: ${p.name} (Click or V to cycle)`;
+        }
+
+        const panelMonoBtn = shadow.querySelector('#panel-mono');
+        if (panelMonoBtn) {
+            panelMonoBtn.classList.toggle('active', monoAudioActive);
+            panelMonoBtn.textContent = monoAudioActive ? '🎧 Mono ON' : '🎧 Mono';
+        }
 
         const customRate = Number(video.playbackRate);
         if (Number.isFinite(customRate)) {
@@ -7014,6 +7274,20 @@
                 toggleLoudBoost(v);
                 return;
             }
+            if (e.key === 'M' || e.code === 'KeyM') {
+                e.preventDefault();
+                e.stopPropagation();
+                try { e.stopImmediatePropagation(); } catch (_) {}
+                toggleMonoAudio(v);
+                return;
+            }
+            if (e.key === 'V' || e.code === 'KeyV') {
+                e.preventDefault();
+                e.stopPropagation();
+                try { e.stopImmediatePropagation(); } catch (_) {}
+                cycleAudioPreset(v);
+                return;
+            }
             if (e.key === 'A' || e.code === 'KeyA') {
                 e.preventDefault();
                 e.stopPropagation();
@@ -7101,6 +7375,13 @@
                 e.preventDefault();
                 e.stopPropagation();
                 clearLoopAB();
+                break;
+
+            case 'v':
+            case 'V':
+                e.preventDefault();
+                e.stopPropagation();
+                cycleAudioPreset(v);
                 break;
         }
     }, { capture: true });
@@ -7220,6 +7501,14 @@
                     if (Boolean(change.newValue) !== ambientGlowActive) {
                         toggleAmbientGlow();
                         syncControlsToVideo();
+                    }
+                } else if (key === 'audioPreset') {
+                    if (change.newValue && change.newValue !== currentAudioPreset) {
+                        applyAudioPreset(change.newValue, true);
+                    }
+                } else if (key === 'monoAudioActive') {
+                    if (Boolean(change.newValue) !== monoAudioActive) {
+                        toggleMonoAudio(getVideo());
                     }
                 } else if (key === 'bassBoostEnabled') {
                     if (Boolean(change.newValue) !== bassBoostActive) {

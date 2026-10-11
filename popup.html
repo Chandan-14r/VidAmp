@@ -416,38 +416,47 @@
     <div class="card">
       <div class="row-between">
         <div class="label-group">
-          <span class="item-title">Loud Sound Boost (B)</span>
-          <span class="item-desc">Press "B" on keyboard to amplify audio loudly up to 200%</span>
+          <span class="item-title">Turbo Loud Sound Boost (B)</span>
+          <span class="item-desc">Cycle super volume boosts: 200% ➔ 300% ➔ 600% (Limiter protected)</span>
         </div>
         <span class="badge" style="font-weight:700;">Key B</span>
       </div>
       <div class="row-between" style="margin-top: 10px;">
         <div class="label-group">
-          <span class="item-title">Volume Scale (0–20)</span>
-          <span class="item-desc">Sound starts steadily from 1 and reaches 100% at 20</span>
+          <span class="item-title">Volume Scale (0–20 & 100%–600%)</span>
+          <span class="item-desc">Sound steps 0–20 to 100%, then seamlessly boosts up to 600%</span>
         </div>
-        <span class="badge" style="font-weight:700;">0–20 Steps</span>
+        <span class="badge" style="font-weight:700;">0–600%</span>
       </div>
     </div>
 
     <div class="card">
       <div class="row-between">
         <div class="label-group">
-          <span class="item-title">Bass Boost (+7dB)</span>
-          <span class="item-desc">Punchy low-end sub-bass profile</span>
+          <span class="item-title">Audio Equalizer & Enhancement Presets (V)</span>
+          <span class="item-desc">Acoustic EQ profiles & dynamic leveler (Press "V" to cycle in video)</span>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="bass-boost-toggle">
-          <span class="slider"></span>
-        </label>
       </div>
-      <div class="row-between" style="margin-top: 8px;">
+      <div style="margin-top: 8px;">
+        <select id="audio-preset-select" style="width: 100%;">
+          <option value="normal">🎵 Normal (Flat Studio)</option>
+          <option value="vocal">🎙️ Vocal Clarity (Boost Speech & Dialogue)</option>
+          <option value="bass">💥 Bass Boost Max (+8.5dB Sub-bass)</option>
+          <option value="music">🎧 Music Master (Warm & Crisp)</option>
+          <option value="night">🌙 Night Mode (Dynamic Leveler / Anti-Explosion)</option>
+          <option value="cinema">🎬 Cinema Surround (Spatial 3D)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row-between">
         <div class="label-group">
-          <span class="item-title">Vocal Clarity (+6dB)</span>
-          <span class="item-desc">Crisp dialogue and podcast speech peak</span>
+          <span class="item-title">Mono Audio (Summed L+R)</span>
+          <span class="item-desc">Combines stereo channels into single stream (Shift + M)</span>
         </div>
         <label class="switch">
-          <input type="checkbox" id="vocal-boost-toggle">
+          <input type="checkbox" id="mono-audio-toggle">
           <span class="slider"></span>
         </label>
       </div>
@@ -534,9 +543,11 @@
         • <strong>, / .</strong>: Step backward / forward 1 exact frame.<br>
         • <strong>A / B</strong>: Set A/B loop points on timestamp.<br>
         • <strong>🎬 Export Clip</strong>: Download loop as high-res WebM.<br>
-        • <strong>B</strong>: Loud Sound Boost (200%).<br>
-        • <strong>↑ / PgUp</strong>: Sound +1 on 0–20 scale (reaches 100% at 20).<br>
-        • <strong>↓ / PgDn</strong>: Sound −1 on 0–20 scale.<br>
+        • <strong>B</strong>: Turbo Loud Boost (200% / 300% / 600% / Normal).<br>
+        • <strong>V</strong>: Cycle Audio Presets (Vocal, Bass, Music, Night Mode, Cinema).<br>
+        • <strong>Shift + M</strong>: Toggle Mono Audio (Summed L+R).<br>
+        • <strong>↑ / PgUp</strong>: Sound +1 on 0–20 scale, seamlessly boosts up to 600%.<br>
+        • <strong>↓ / PgDn</strong>: Sound −1 on 0–20 scale & drops down from 600%.<br>
         • <strong>Shift + A</strong>: Toggle Universal Ambient Glow.<br>
         • <strong>Shift + S</strong>: Toggle Sleep Timer (15m/30m/end).<br>
         • <strong>R</strong>: Reset speed to 1.0×.
