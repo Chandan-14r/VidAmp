@@ -2284,6 +2284,7 @@
             // 1. Temporary 2x boost detection (YouTube native hold-to-2x)
             if (isYouTubePage() && Math.abs(n - 2.0) < 0.01) {
                 if (rateGuard) rateGuard.sawBoost = true;
+                dismissYouTubeSpeedmasterOverlay();
                 if (Math.abs(persistentUserSpeed - 2.0) >= 0.01) {
                     temporaryBoostActive = true;
                     temporaryBoostOriginalSpeed = persistentUserSpeed;
@@ -6430,16 +6431,86 @@
         document.documentElement.classList.remove('mvc-holding-2x');
     }
 
+    let ytSpeedmasterStyleEl = null;
+    let ytSpeedmasterObserver = null;
+
+    function ensureYouTubeSpeedmasterSuppression() {
+        if (!isYouTubePage()) return;
+        if (ytSpeedmasterStyleEl && ytSpeedmasterStyleEl.isConnected) return;
+        ytSpeedmasterStyleEl = document.createElement('style');
+        ytSpeedmasterStyleEl.id = 'mvc-yt-speedmaster-suppress';
+        ytSpeedmasterStyleEl.textContent = `
+            /* Permanently suppress YouTube's native 2x pill banner and stuck speedmaster overlays */
+            .ytp-speedmaster-overlay,
+            .ytp-speedmaster-overlay *,
+            .ytp-speedmaster-container,
+            .ytp-speedmaster-container *,
+            .ytp-speedmaster-label,
+            .ytp-speedmaster-icon,
+            [class*="ytp-speedmaster"],
+            [class*="ytp-speedmaster"] *,
+            .ytp-overlay.ytp-speedmaster-overlay {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+                width: 0 !important;
+                height: 0 !important;
+                clip: rect(0, 0, 0, 0) !important;
+                clip-path: inset(100%) !important;
+                transition: none !important;
+                animation: none !important;
+            }
+        `;
+        try {
+            (document.head || document.documentElement).appendChild(ytSpeedmasterStyleEl);
+        } catch (_) {}
+    }
+
+    function setupYouTubeSpeedmasterObserver() {
+        if (!isYouTubePage() || ytSpeedmasterObserver) return;
+        const player = document.querySelector('#movie_player, .html5-video-player') || document.body;
+        if (!player) return;
+        try {
+            ytSpeedmasterObserver = new MutationObserver(mutations => {
+                for (const m of mutations) {
+                    for (const node of m.addedNodes) {
+                        if (node instanceof HTMLElement) {
+                            if (node.classList?.contains('ytp-speedmaster-overlay') || node.className?.includes?.('speedmaster')) {
+                                node.style.setProperty('display', 'none', 'important');
+                                node.style.setProperty('visibility', 'hidden', 'important');
+                                node.style.setProperty('opacity', '0', 'important');
+                                try { node.remove(); } catch (_) {}
+                            } else {
+                                const sub = node.querySelector?.('.ytp-speedmaster-overlay, [class*="speedmaster"]');
+                                if (sub) {
+                                    sub.style.setProperty('display', 'none', 'important');
+                                    sub.style.setProperty('visibility', 'hidden', 'important');
+                                    sub.style.setProperty('opacity', '0', 'important');
+                                    try { sub.remove(); } catch (_) {}
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            ytSpeedmasterObserver.observe(player, { childList: true, subtree: true });
+        } catch (_) {}
+    }
+
     function dismissYouTubeSpeedmasterOverlay() {
         if (!isYouTubePage()) return;
+        ensureYouTubeSpeedmasterSuppression();
+        setupYouTubeSpeedmasterObserver();
         try {
-            const overlays = document.querySelectorAll('.ytp-speedmaster-overlay, .ytp-overlay.ytp-speedmaster-overlay, [class*="speedmaster"]');
+            const overlays = document.querySelectorAll('.ytp-speedmaster-overlay, .ytp-overlay.ytp-speedmaster-overlay, [class*="speedmaster"], .ytp-speedmaster-container, .ytp-speedmaster-label, .ytp-speedmaster-icon');
             overlays.forEach(el => {
                 if (el) {
                     el.style.setProperty('display', 'none', 'important');
-                    setTimeout(() => {
-                        try { el.style.removeProperty('display'); } catch (_) {}
-                    }, 200);
+                    el.style.setProperty('visibility', 'hidden', 'important');
+                    el.style.setProperty('opacity', '0', 'important');
+                    el.style.setProperty('pointer-events', 'none', 'important');
+                    try { el.remove(); } catch (_) {}
                 }
             });
         } catch (_) {}
@@ -6872,6 +6943,8 @@
 
         const v = g.video;
         if (!v || !v.isConnected) return;
+
+        dismissYouTubeSpeedmasterOverlay();
 
         if (Math.abs(Number(v.playbackRate) - g.rate) > 0.01) {
             dbg('[MVC][guard] restoring', g.rate, 'was', v.playbackRate, 'via', why);
@@ -7828,8 +7901,17 @@
     }
 
     if (isYouTubePage()) {
+        ensureYouTubeSpeedmasterSuppression();
+        setupYouTubeSpeedmasterObserver();
+        dismissYouTubeSpeedmasterOverlay();
+
         ['yt-navigate-finish', 'yt-page-data-updated', 'spfdone'].forEach(evt => {
-            document.addEventListener(evt, refreshAfterNavigation, { passive: true });
+            document.addEventListener(evt, () => {
+                ensureYouTubeSpeedmasterSuppression();
+                setupYouTubeSpeedmasterObserver();
+                dismissYouTubeSpeedmasterOverlay();
+                refreshAfterNavigation();
+            }, { passive: true });
         });
 
         ['loadedmetadata', 'canplay', 'playing'].forEach(evt => {
