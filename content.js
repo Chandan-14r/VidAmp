@@ -589,6 +589,164 @@
         }
     }
 
+    function isVideoMuted(v) {
+        if (!v) v = getVideo() || document.querySelector('video');
+        if (!v) return false;
+
+        if (v.muted) return true;
+        if (v.volume === 0) return true;
+        if (prefs.muted) return true;
+
+        if (isYouTubePage()) {
+            try {
+                const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                if (mp) {
+                    if (typeof mp.isMuted === 'function' && mp.isMuted()) return true;
+                    if (typeof mp.getVolume === 'function' && mp.getVolume() === 0) return true;
+                }
+            } catch (_) {}
+            try {
+                const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                if (ytpMuteBtn) {
+                    const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                    if (label.includes('unmute')) return true;
+                }
+            } catch (_) {}
+        }
+
+        return false;
+    }
+
+    function unmuteVideo(v, targetVolume = null) {
+        if (!v) v = getVideo() || document.querySelector('video');
+        if (!v) return;
+
+        // 1. Unmute native HTML5 media element
+        try {
+            v.muted = false;
+            v.defaultMuted = false;
+            v.removeAttribute('muted');
+        } catch (_) {}
+
+        // 2. Determine target volume (at least 0.05, defaults to prefs.volume, v.volume, or 0.25)
+        let vol = targetVolume;
+        if (vol === null || vol === undefined) {
+            if (prefs.volume && prefs.volume > 0.05) {
+                vol = prefs.volume;
+            } else if (v.volume && v.volume > 0.05) {
+                vol = v.volume;
+            } else {
+                vol = 0.25;
+            }
+        }
+        vol = Math.max(0.05, Math.min(prefs.volumeBoostEnabled ? 2.0 : 1.0, vol));
+
+        prefs.muted = false;
+        prefs.volume = vol;
+        saveValue(siteKey('muted'), false);
+        saveValue(siteKey('volume'), vol);
+
+        // Apply volume to element & Web Audio
+        if (vol <= 1.0) {
+            try { v.volume = vol; } catch (_) {}
+            const entry = audioNodes.get(v);
+            if (entry) {
+                try { entry.gain.gain.value = 1.0; } catch (_) {}
+            }
+        } else {
+            try { v.volume = 1.0; } catch (_) {}
+            const entry = getOrCreateAudioBoostNode(v);
+            if (entry) {
+                try { entry.gain.gain.value = vol; } catch (_) {}
+            }
+        }
+
+        // 3. YouTube player specialized unmute & volume sync
+        if (isYouTubePage()) {
+            try {
+                const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                let unMutedViaApi = false;
+                if (mp && typeof mp.unMute === 'function') {
+                    mp.unMute();
+                    unMutedViaApi = true;
+                    if (typeof mp.setVolume === 'function') {
+                        mp.setVolume(Math.round(Math.min(1.0, vol) * 100));
+                    }
+                }
+                if (!unMutedViaApi) {
+                    const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                    if (ytpMuteBtn) {
+                        const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                        if (label.includes('unmute')) {
+                            ytpMuteBtn.click();
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
+
+        // 4. Dispatch HTML5 volumechange event so custom player UIs (ArtPlayer, Video.js, Plyr, etc.) sync
+        try {
+            v.dispatchEvent(new Event('volumechange', { bubbles: true }));
+        } catch (_) {}
+
+        // 5. Resume Web AudioContext if suspended
+        try {
+            const entry = audioNodes.get(v);
+            if (entry && entry.ctx && entry.ctx.state === 'suspended') {
+                entry.ctx.resume().catch(() => {});
+            }
+        } catch (_) {}
+
+        // 6. Sync UI controls and toolbar
+        syncControlsToVideo();
+        if (toolbarBuilt) syncToolbar();
+
+        return vol;
+    }
+
+    function toggleMute(v) {
+        if (!v) v = getVideo() || document.querySelector('video');
+        if (!v) return;
+
+        if (isVideoMuted(v)) {
+            const vol = unmuteVideo(v);
+            showToast(`🔊 Unmuted: ${Math.round((vol || 0.25) * 100)}%`);
+        } else {
+            v.muted = true;
+            prefs.muted = true;
+            saveValue(siteKey('muted'), true);
+
+            if (isYouTubePage()) {
+                try {
+                    const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                    let mutedViaApi = false;
+                    if (mp && typeof mp.mute === 'function') {
+                        mp.mute();
+                        mutedViaApi = true;
+                    }
+                    if (!mutedViaApi) {
+                        const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                        if (ytpMuteBtn) {
+                            const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                            if (!label.includes('unmute')) {
+                                ytpMuteBtn.click();
+                            }
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            try {
+                v.dispatchEvent(new Event('volumechange', { bubbles: true }));
+            } catch (_) {}
+
+            syncControlsToVideo();
+            if (toolbarBuilt) syncToolbar();
+            showToast('🔇 Muted');
+        }
+    }
+
     function applyVolumeAndBoost(v, volumeLevel, notify = false) {
         if (!v) return;
 
@@ -598,39 +756,52 @@
 
         if (effectiveVol <= 1.0) {
             // Normal volume
-            v.volume = effectiveVol;
+            try { v.volume = effectiveVol; } catch (_) {}
             const entry = audioNodes.get(v);
             if (entry) {
-                entry.gain.gain.value = 1.0;
+                try { entry.gain.gain.value = 1.0; } catch (_) {}
             }
             if (notify) {
                 showToast(`🔊 Volume: ${Math.round(effectiveVol * 100)}%`);
             }
         } else {
             // Volume Boost active (> 100%)
-            v.volume = 1.0;
+            try { v.volume = 1.0; } catch (_) {}
             const entry = getOrCreateAudioBoostNode(v);
             if (entry) {
-                entry.gain.gain.value = effectiveVol;
+                try { entry.gain.gain.value = effectiveVol; } catch (_) {}
                 if (notify) {
                     showToast(`🚀 Volume Boost: ${Math.round(effectiveVol * 100)}%`);
                 }
             } else {
                 // If Web Audio blocked, stay at 100%
-                v.volume = 1.0;
+                try { v.volume = 1.0; } catch (_) {}
                 if (notify) {
                     showToast(`🔊 Volume: 100%`);
                 }
             }
         }
 
-        if (effectiveVol > 0 && v.muted) {
-            v.muted = false;
-            prefs.muted = false;
-            saveValue(siteKey('muted'), false);
+        // If volume > 0 and video is muted, unmute immediately!
+        if (effectiveVol > 0 && (v.muted || prefs.muted || isVideoMuted(v))) {
+            unmuteVideo(v, effectiveVol);
+        } else {
+            // Sync YouTube player volume
+            if (isYouTubePage()) {
+                try {
+                    const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                    if (mp && typeof mp.setVolume === 'function') {
+                        mp.setVolume(Math.round(Math.min(1.0, effectiveVol) * 100));
+                    }
+                } catch (_) {}
+            }
+            try {
+                v.dispatchEvent(new Event('volumechange', { bubbles: true }));
+            } catch (_) {}
         }
 
         syncControlsToVideo();
+        if (toolbarBuilt) syncToolbar();
     }
 
     function toggleBassBoost(v) {
@@ -1652,6 +1823,8 @@
             }
             prefs.muted = Boolean(v.muted);
             saveValue(siteKey('muted'), prefs.muted);
+            syncControlsToVideo();
+            if (toolbarBuilt) syncToolbar();
         }, { signal });
 
         v.addEventListener('ratechange', () => {
@@ -2680,7 +2853,8 @@
                 <div class="cheat-row"><span>F</span><span>Fullscreen</span></div>
                 <div class="cheat-row"><span>A / B</span><span>Set Loop Point A / B</span></div>
                 <div class="cheat-row"><span>C</span><span>Clear A-B Loop</span></div>
-                <div class="cheat-row"><span>Shift + ↑/↓</span><span>Volume +/− 5%</span></div>
+                <div class="cheat-row"><span>↑ / PgUp / Shift+↑</span><span>Volume +5% (Unmutes)</span></div>
+                <div class="cheat-row"><span>↓ / PgDn / Shift+↓</span><span>Volume −5%</span></div>
                 <div class="cheat-row"><span>Alt + B</span><span>Show / hide VidAmp tools</span></div>
                 <div class="cheat-row"><span>Trackpad Pinch</span><span>Pinch in/out on touchpad for Speed</span></div>
                 <div class="cheat-row"><span>Right-Drag Mouse</span><span>Move Up/Right (+) or Down/Left (−) for Speed</span></div>
@@ -2999,10 +3173,7 @@
         muteBtn.onclick = () => {
             const v = getVideo();
             if (!v) return;
-            v.muted = !v.muted;
-            prefs.muted = v.muted;
-            saveValue(siteKey('muted'), prefs.muted);
-            showToast(v.muted ? '🔇 Muted' : '🔊 Unmuted');
+            toggleMute(v);
         };
 
         progressBar.addEventListener('click', e => {
@@ -3784,6 +3955,11 @@
                 applyVolumeAndBoost(v, 1.0, true);
             }
             syncToolbar();
+        };
+        btnVolBoost.oncontextmenu = e => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleMute(getVideo());
         };
 
         btnBass.onclick = () => toggleBassBoost(getVideo());
@@ -6599,20 +6775,125 @@
             return;
         }
 
-        // Shift + Up/Down for Volume
-        if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-            if (e.key === 'ArrowUp') {
+        // ---------------------------------------------------------
+        // PageUp / PageDown: Volume Control & Instant Unmute
+        // ---------------------------------------------------------
+        if ((e.key === 'PageUp' || e.code === 'PageUp') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            try { e.stopImmediatePropagation(); } catch (_) {}
+
+            if (isVideoMuted(v)) {
+                const targetVol = Math.max(0.1, (prefs.volume && prefs.volume > 0) ? prefs.volume + 0.05 : 0.25);
+                unmuteVideo(v, targetVol);
+                showToast(`🔊 Unmuted: ${Math.round(targetVol * 100)}%`);
+            } else {
+                applyVolumeAndBoost(v, prefs.volume + 0.05, true);
+            }
+            return;
+        }
+
+        if ((e.key === 'PageDown' || e.code === 'PageDown') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            try { e.stopImmediatePropagation(); } catch (_) {}
+            applyVolumeAndBoost(v, prefs.volume - 0.05, true);
+            return;
+        }
+
+        // ---------------------------------------------------------
+        // Up Arrow: Instant Unmute & Volume Control
+        // ---------------------------------------------------------
+        if ((e.key === 'ArrowUp' || e.code === 'ArrowUp') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            // Case 1: Video is currently muted -> ALWAYS UNMUTE IMMEDIATELY!
+            if (isVideoMuted(v)) {
                 e.preventDefault();
                 e.stopPropagation();
+                try { e.stopImmediatePropagation(); } catch (_) {}
+                const targetVol = Math.max(0.1, (prefs.volume && prefs.volume > 0) ? prefs.volume + 0.05 : 0.25);
+                unmuteVideo(v, targetVol);
+                showToast(`🔊 Unmuted: ${Math.round(targetVol * 100)}%`);
+                return;
+            }
+
+            // Case 2: Shift + ArrowUp -> Always increase volume via VidAmp
+            if (e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                try { e.stopImmediatePropagation(); } catch (_) {}
                 applyVolumeAndBoost(v, prefs.volume + 0.05, true);
                 return;
             }
-            if (e.key === 'ArrowDown') {
+
+            // Case 3: Plain ArrowUp when unmuted
+            if (isYouTubePage()) {
+                const isPlayerFocused = document.activeElement && (
+                    document.activeElement.id === 'movie_player' ||
+                    document.activeElement.classList?.contains('html5-video-player') ||
+                    document.activeElement.closest?.('#movie_player, .html5-video-player')
+                );
+                // If YouTube player is not focused, or volume boost > 100%, VidAmp handles it to prevent page scrolling!
+                if (!isPlayerFocused || prefs.volume > 1.0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    applyVolumeAndBoost(v, prefs.volume + 0.05, true);
+                    return;
+                }
+                // When focused on YouTube player at normal volume, let YouTube native handle its UI
+                return;
+            }
+
+            // Non-YouTube video players (generic HTML5, movies, embeds):
+            // Always adjust volume and prevent window scrolling
+            if (isVisible(v)) {
                 e.preventDefault();
                 e.stopPropagation();
+                try { e.stopImmediatePropagation(); } catch (_) {}
+                applyVolumeAndBoost(v, prefs.volume + 0.05, true);
+                return;
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Down Arrow: Volume Decrease
+        // ---------------------------------------------------------
+        if ((e.key === 'ArrowDown' || e.code === 'ArrowDown') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            // Case 1: Shift + ArrowDown -> Always decrease volume via VidAmp
+            if (e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                try { e.stopImmediatePropagation(); } catch (_) {}
                 applyVolumeAndBoost(v, prefs.volume - 0.05, true);
                 return;
             }
+
+            // Case 2: Plain Down Arrow
+            if (isYouTubePage()) {
+                const isPlayerFocused = document.activeElement && (
+                    document.activeElement.id === 'movie_player' ||
+                    document.activeElement.classList?.contains('html5-video-player') ||
+                    document.activeElement.closest?.('#movie_player, .html5-video-player')
+                );
+                if (!isPlayerFocused || prefs.volume > 1.0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    applyVolumeAndBoost(v, prefs.volume - 0.05, true);
+                    return;
+                }
+                return;
+            }
+
+            if (isVisible(v)) {
+                e.preventDefault();
+                e.stopPropagation();
+                try { e.stopImmediatePropagation(); } catch (_) {}
+                applyVolumeAndBoost(v, prefs.volume - 0.05, true);
+                return;
+            }
+        }
+
+        // Shift + Other Shortcuts
+        if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
             if (e.key === 'ArrowRight') {
                 e.preventDefault();
                 e.stopPropagation();
@@ -6684,10 +6965,7 @@
             case 'M':
                 e.preventDefault();
                 e.stopPropagation();
-                v.muted = !v.muted;
-                prefs.muted = v.muted;
-                saveValue(siteKey('muted'), prefs.muted);
-                showToast(v.muted ? '🔇 Muted' : '🔊 Unmuted');
+                toggleMute(v);
                 break;
 
             case 'p':
