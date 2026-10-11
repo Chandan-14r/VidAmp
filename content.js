@@ -5436,11 +5436,6 @@
         // Suppress any video timing display (user requested complete removal of top timing pill)
         if (isTimingMessage(message)) return;
 
-        // Suppress duplicate 2x badge on YouTube (YouTube already renders its native 2x bubble on screen)
-        if (isYouTubePage() && typeof message === 'string' && (message.includes('2×') || message.includes('2x') || message.includes('hold'))) {
-            return;
-        }
-
         // ONE single unified on-screen HUD (never duplicate)
         showVideoHud(message);
     }
@@ -5779,6 +5774,19 @@
     }
 
     function findVideoAtPoint(x, y) {
+        // Fast, direct check for YouTube player
+        if (isYouTubePage()) {
+            const yt = findYouTubeMainVideo();
+            if (yt && yt.isConnected && isUsableVideo(yt)) {
+                const rect = yt.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 &&
+                    x >= rect.left && x <= rect.right &&
+                    y >= rect.top && y <= rect.bottom) {
+                    return yt;
+                }
+            }
+        }
+
         let el = null;
         try { el = document.elementFromPoint(x, y); } catch (_) {}
 
@@ -6209,6 +6217,14 @@
         }
     }, { capture: true, passive: false });
 
+    document.addEventListener('touchmove', e => {
+        if (gesturePointers.size === 2 && gestureVideo) {
+            if (e.cancelable) {
+                try { e.preventDefault(); } catch (_) {}
+            }
+        }
+    }, { capture: true, passive: false });
+
     function releaseGesturePointerAndHoldBoost(e) {
         if (e && e.pointerType === 'touch') {
             releaseGesturePointer(e);
@@ -6311,7 +6327,7 @@
         if (targetVideo && targetVideo.controls) {
             try {
                 const rect = targetVideo.getBoundingClientRect();
-                if (e.clientY >= rect.bottom - 48) return true;
+                if (e.clientY >= rect.bottom - 44) return true;
             } catch (_) {}
         }
 
@@ -6323,6 +6339,7 @@
             }
             if (node instanceof HTMLVideoElement) return false;
 
+            // Only block when actually hovering over interactive buttons, sliders, inputs, or the bottom controls bar
             return (
                 node.tagName === 'BUTTON' ||
                 node.tagName === 'INPUT' ||
@@ -6333,10 +6350,7 @@
                 node.getAttribute?.('role') === 'menuitem' ||
                 node.hasAttribute?.('aria-controls') ||
                 node.classList?.contains('ytp-chrome-bottom') ||
-                node.classList?.contains('ytp-chrome-top') ||
-                node.classList?.contains('control-bar') ||
-                node.classList?.contains('player-controls') ||
-                Boolean(node.closest?.('.ytp-chrome-bottom, .ytp-chrome-top, .vjs-control-bar, .art-controls, .jw-controls, .jw-controlbar, .plyr__controls, [class*="progress" i], [class*="scrub" i], [class*="slider" i], [class*="control-bar" i], [class*="player-controls" i], [class*="controls-bar" i]'))
+                Boolean(node.closest?.('.ytp-chrome-bottom, .vjs-control-bar, .art-controls, .jw-controls, .jw-controlbar, .plyr__controls, [class*="progress-bar" i], [class*="scrubber" i]'))
             );
         });
     }
@@ -6545,8 +6559,6 @@
         trackpadGestureIdleTimer = null;
     }
 
-    let wheelLastRateTime = 0;
-
     function handleSpeedWheelStep(target, travel, isDiscreteNotch = false) {
         if (!target || !target.isConnected) return;
 
@@ -6561,12 +6573,15 @@
                 accumulatedWheelDelta = 0;
             }, 250);
 
-            // Frictionless, responsive threshold (10px) with velocity scaling
-            const STEP_PX = 10;
+            // Frictionless, responsive threshold scaled with sensitivity setting
+            // Default 55 * 0.25 ≈ 14px of natural touchpad travel per 0.05x speed increment
+            const sens = prefs.gestureSensitivity || DEFAULT_GESTURE_SENSITIVITY;
+            const STEP_PX = Math.max(8, Math.min(28, Math.round(sens * 0.25)));
+
             const absDelta = Math.abs(accumulatedWheelDelta);
             if (absDelta >= STEP_PX) {
                 const dir = Math.sign(accumulatedWheelDelta);
-                // Allow dynamic scaling: fast pinch sweeps smoothly through speeds
+                // Proportional velocity scaling: gentle glide gives 1 step, brisk swipe sweeps smoothly
                 const count = Math.min(4, Math.floor(absDelta / STEP_PX));
                 steps = dir * count;
                 // Preserve true remainder so gesture momentum flows naturally and seamlessly
@@ -6575,10 +6590,6 @@
         }
 
         if (steps === 0) return;
-
-        const now = performance.now();
-        if (now - wheelLastRateTime < 16) return; // Smooth 60fps refresh rate
-        wheelLastRateTime = now;
 
         const currentRate = Number(target.playbackRate) || (prefs.speed || 1);
         const baseStep = 0.05;
@@ -6611,63 +6622,53 @@
         }
 
         const target = findVideoAtPoint(e.clientX, e.clientY);
-        const isOverVideo = Boolean(target && !isOverPlayerControl(e));
+        const isOverVideo = Boolean(target && !isOverPlayerControl(e, target));
         if (!isOverVideo) return;
+
+        if (!prefs.trackpadSpeedEnabled) return;
 
         const dir = prefs.gestureReverse ? -1 : 1;
         const isDiscrete = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 80;
 
-        // 2. Laptop Touchpad Pinch Gesture (ctrlKey + wheel) over video player:
-        // Dedicated touchpad gesture for frictionless, smooth speed control (never interferes with page scrolling!)
-        if (e.ctrlKey && prefs.trackpadSpeedEnabled) {
+        // Modifier Key: Shift + Wheel = Volume adjustment
+        if (e.shiftKey) {
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
             try { e.stopPropagation(); } catch (_) {}
 
-            const pinchDir = prefs.gestureReverse ? -1 : 1;
-            handleSpeedWheelStep(target, -e.deltaY * pinchDir, false);
-            return;
-        }
-
-        // 3. Modifier Key Two-Finger Gesture over video player:
-        // Alt + Scroll = Speed control
-        // Shift + Scroll = Volume control
-        if (e.altKey || e.shiftKey) {
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-
-            if (e.shiftKey) {
-                const dirUp = (-e.deltaY * dir) > 0;
-                if (dirUp) {
-                    stepUpSound(target);
-                } else {
-                    stepDownSound(target);
-                }
+            const dirUp = (-e.deltaY * dir) > 0;
+            if (dirUp) {
+                stepUpSound(target);
             } else {
-                handleSpeedWheelStep(target, -e.deltaY * dir, isDiscrete);
+                stepDownSound(target);
             }
             return;
         }
 
-        // 4. Horizontal Two-Finger Swipe over video player:
-        // Left/Right swipe controls speed without hijacking vertical page scrolling
-        if (prefs.trackpadSpeedEnabled && Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && Math.abs(e.deltaX) > 6) {
+        // Two-Finger Gesture (Vertical up/down, Horizontal left/right, or Pinch) directly over video player:
+        // Adjusts speed with frictionless, smooth precision!
+        let travel = 0;
+        if (e.ctrlKey) {
+            // Touchpad pinch-to-zoom gesture
+            travel = -e.deltaY * dir;
+        } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && Math.abs(e.deltaX) > 4) {
+            // Horizontal two-finger swipe (right = up, left = down)
+            travel = e.deltaX * dir;
+        } else if (Math.abs(e.deltaY) > 0) {
+            // Standard vertical two-finger swipe (up = speed up, down = speed down) or mouse wheel
+            travel = -e.deltaY * dir;
+        }
+
+        if (travel !== 0) {
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
             try { e.stopPropagation(); } catch (_) {}
 
-            const delta = e.deltaX * dir;
-            handleSpeedWheelStep(target, delta, false);
+            handleSpeedWheelStep(target, travel, isDiscrete);
             return;
         }
-
-        // Standard two-finger vertical scrolling (up/down) is NEVER hijacked!
-        // Whether in normal mode, theater mode, or fullscreen:
-        // The user can freely, smoothly, and normally scroll the page/player up and down!
     }, { capture: true, passive: false });
 
     /* =========================================================
