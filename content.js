@@ -1645,18 +1645,35 @@
         return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
     }
 
+    function detectVideoFps(v) {
+        if (!v) return 30;
+        try {
+            const quality = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+            const frames = quality ? quality.totalVideoFrames : (v.webkitDecodedFrameCount || 0);
+            if (frames > 30 && v.currentTime > 1) {
+                const fps = frames / v.currentTime;
+                if (fps >= 45) return 60;
+                if (fps >= 23 && fps <= 26) return 24;
+                if (fps >= 28 && fps <= 32) return 30;
+                return Math.max(15, Math.min(120, Math.round(fps)));
+            }
+        } catch (_) {}
+        return 30;
+    }
+
     function stepVideoFrame(direction = 1) {
         const v = getVideo();
         if (!v) return;
 
         if (!v.paused) v.pause();
 
-        const frameDuration = 1 / 30; // standard 30fps step (~0.0333s)
+        const fps = detectVideoFps(v);
+        const frameDuration = 1 / fps;
         const targetTime = Math.max(0, Math.min(v.duration || Infinity, v.currentTime + direction * frameDuration));
         setCurrentTimeNative(v, targetTime);
 
         const sign = direction > 0 ? '+1' : '-1';
-        showToast(`🎞️ Frame ${sign}`);
+        showToast(`🎞️ Frame ${sign} (${fps}fps)`);
         syncControlsToVideo();
     }
 
@@ -1850,6 +1867,10 @@
 
         sleepTimerInterval = setInterval(() => {
             sleepTimerRemainingSec--;
+            if (sleepTimerRemainingSec % 30 === 0) {
+                if (toolbarBuilt) syncToolbar();
+                syncControlsToVideo();
+            }
             if (sleepTimerRemainingSec <= 10 && sleepTimerRemainingSec > 0) {
                 const v = getVideo();
                 if (v && v.volume > 0.1) {
@@ -3427,6 +3448,8 @@
         const hudTabs = shadow.querySelectorAll('.hud-tab');
         const hudPanes = shadow.querySelectorAll('.hud-pane');
         hudTabs.forEach(tab => {
+            tab.setAttribute('tabindex', '0');
+            tab.setAttribute('role', 'tab');
             tab.onclick = () => {
                 const targetId = tab.getAttribute('data-tab-target');
                 hudTabs.forEach(t => t.classList.remove('active'));
@@ -3438,6 +3461,12 @@
                     settingsBtn.classList.toggle('active', targetId === 'hud-prefs');
                 }
             };
+            tab.addEventListener('keydown', e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    tab.click();
+                }
+            });
         });
 
         settingsBtn.onclick = () => {
@@ -3616,6 +3645,27 @@
             }
             syncControlsToVideo();
         };
+
+        volumeSlider.ondblclick = function () {
+            const v = getVideo();
+            if (!v) return;
+            applyVolumeAndBoost(v, 1.0, true);
+            showToast('🔊 Volume reset to 20/20 (100%)');
+            syncControlsToVideo();
+        };
+
+        const volValEl = $('#volume-val');
+        if (volValEl) {
+            volValEl.style.cursor = 'pointer';
+            volValEl.title = 'Double-click to reset volume to 20/20 (100%)';
+            volValEl.ondblclick = function () {
+                const v = getVideo();
+                if (!v) return;
+                applyVolumeAndBoost(v, 1.0, true);
+                showToast('🔊 Volume reset to 20/20 (100%)');
+                syncControlsToVideo();
+            };
+        }
 
         const panelLoudBoost = $('#panel-loudboost');
         if (panelLoudBoost) {
@@ -4283,31 +4333,31 @@
         };
 
         // Buttons
-        const btnLoop       = btn('loop', 'loop', 'Loop whole video');
-        const btnVolBoost   = btn('volboost', 'volumeBoost', 'Turbo Loud Boost (B: 200% / 300% / 600%)');
-        const btnBass       = btn('bass', 'bass', 'Audio Presets (Click/V: Cycle Presets, Right-Click: Mono Audio)');
-        const btnCinema     = btn('cinema', 'cinema', 'Cinema Mode (Dim lights)');
-        const btnAmbient    = btn('ambient', 'ambient', 'Universal Ambient Glow (Bias Lighting)');
-        const btnTheater    = btn('theater', 'theater', 'Theater Mode / Resize Player');
-        const btnPip        = btn('pip', 'pip', 'Picture-in-Picture (Detach Player)');
-        const btnAspect     = btn('aspect', 'aspect', 'Aspect Ratio (Crop 21:9 / Stretch / Fit)');
-        const btnFullscreen = btn('fullscreen', 'fullscreen', 'Enter fullscreen (F)');
+        const btnLoop       = btn('loop', 'loop', 'Loop whole video (Shift+L)');
+        const btnVolBoost   = btn('volboost', 'volumeBoost', 'Turbo Loud Boost up to 600% (B / Right-Click: Mute)');
+        const btnBass       = btn('bass', 'bass', 'Studio Audio Presets (Click/V: Cycle Presets, Right-Click / Shift+M: Mono)');
+        const btnCinema     = btn('cinema', 'cinema', 'Cinema Mode - Dim page lights (Shift+C)');
+        const btnAmbient    = btn('ambient', 'ambient', 'Universal Ambient Glow - Bias Lighting (Shift+A)');
+        const btnTheater    = btn('theater', 'theater', 'Web Theater Mode - Fill Window (T)');
+        const btnPip        = btn('pip', 'pip', 'Picture-in-Picture - Detach Player (P)');
+        const btnAspect     = btn('aspect', 'aspect', 'Aspect Ratio (Crop 21:9 Ultrawide / Stretch / Fit)');
+        const btnFullscreen = btn('fullscreen', 'fullscreen', 'Enter Fullscreen (F)');
         
         // Speed pill button
         const btnSpeed = document.createElement('button');
         btnSpeed.className = 'tb-btn tb-speed-btn';
         btnSpeed.id = 'tb-speed';
-        btnSpeed.title = 'Playback Speed (Click: Speed Menu, Right-Click: 1×, Right-Drag on video)';
+        btnSpeed.title = 'Playback Speed (Click: Menu, Right-Click: 1×, [ / ] to step, Right-Drag on video)';
         btnSpeed.innerHTML = `${ICONS.speed}<span id="tb-speed-val">1×</span>`;
 
-        const btnFilters    = btn('filters', 'filters', 'Video Filters (HDR / Night / Contrast)');
-        const btnScreenshot = btn('screenshot', 'screenshot', 'Capture Screenshot');
-        const btnAbLoop     = btn('abloop', 'abloop', 'A-B Loop Repeater (Click to set A, B, clear)');
+        const btnFilters    = btn('filters', 'filters', 'Video Filters - HDR / Night / Contrast');
+        const btnScreenshot = btn('screenshot', 'screenshot', 'Capture Frame Screenshot (Shift+S)');
+        const btnAbLoop     = btn('abloop', 'abloop', 'A-B Loop Repeater (Click / Shift+[: A, Shift+]: B)');
         const btnClip       = btn('clip', 'clip', 'Export Loop Clip (.webm)');
         const btnDownload   = btn('download', 'download', 'Smart Media Downloader (HTML5 Media Sites)');
         const btnBookmark   = btn('bookmark', 'bookmark', 'Video Bookmark (Click: Save, Right-Click: List)');
         const btnSleep      = btn('sleep', 'sleep', 'Sleep Timer (Click: 15m/30m/45m/60m/End/Off)');
-        const btnSettings   = btn('settings', 'settings', 'Video Controller Panel');
+        const btnSettings   = btn('settings', 'settings', 'Video Controller HUD Panel (Alt+T)');
         const btnClose      = btn('close', 'close', 'Hide toolbar (Press Alt+T to restore)');
         btnClose.style.marginLeft = '3px';
         btnClose.style.opacity = '0.7';
@@ -5668,7 +5718,15 @@
             const panelSleep = shadow.querySelector('#panel-sleep');
             if (panelSleep) {
                 panelSleep.classList.toggle('active', sleepTimerMode !== 'off');
-                panelSleep.textContent = sleepTimerMode === 'off' ? '🌙 Sleep' : `🌙 ${sleepTimerMode}`;
+                if (sleepTimerMode === 'off') {
+                    panelSleep.textContent = '🌙 Sleep';
+                } else if (sleepTimerMode === 'ended') {
+                    panelSleep.textContent = '🌙 End';
+                } else if (sleepTimerRemainingSec > 0) {
+                    panelSleep.textContent = `🌙 ${Math.ceil(sleepTimerRemainingSec / 60)}m`;
+                } else {
+                    panelSleep.textContent = `🌙 ${sleepTimerMode}m`;
+                }
             }
 
             const loopClip = shadow.querySelector('#loop-clip');
