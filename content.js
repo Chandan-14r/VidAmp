@@ -2200,6 +2200,7 @@
             // 2. Temporary 2x boost released: the site (YouTube) reset rate back to 1.0
             if (temporaryBoostActive && Math.abs(n - 1.0) < 0.01) {
                 temporaryBoostActive = false;
+                dismissYouTubeSpeedmasterOverlay();
                 const restoreRate = temporaryBoostOriginalSpeed || persistentUserSpeed || 1.0;
                 temporaryBoostOriginalSpeed = null;
 
@@ -2214,7 +2215,9 @@
                 saveValue(siteKey('speed'), restoreRate);
                 syncControlsToVideo();
                 if (toolbarBuilt) syncToolbar();
-                showToast(formatSpeed(restoreRate));
+                if (restoreRate !== 1.0) {
+                    showToast(formatSpeed(restoreRate));
+                }
                 return;
             }
 
@@ -6263,6 +6266,21 @@
         document.documentElement.classList.remove('mvc-holding-2x');
     }
 
+    function dismissYouTubeSpeedmasterOverlay() {
+        if (!isYouTubePage()) return;
+        try {
+            const overlays = document.querySelectorAll('.ytp-speedmaster-overlay, .ytp-overlay.ytp-speedmaster-overlay, [class*="speedmaster"]');
+            overlays.forEach(el => {
+                if (el) {
+                    el.style.setProperty('display', 'none', 'important');
+                    setTimeout(() => {
+                        try { el.style.removeProperty('display'); } catch (_) {}
+                    }, 200);
+                }
+            });
+        } catch (_) {}
+    }
+
     function cancelHoldBoostTimer() {
         if (holdBoostTimer) {
             clearTimeout(holdBoostTimer);
@@ -6324,6 +6342,7 @@
 
         // Restore seekbar and controls visibility
         removeHolding2xClass();
+        dismissYouTubeSpeedmasterOverlay();
 
         if (v && v.isConnected) {
             try {
@@ -6383,6 +6402,12 @@
         }
 
         // 2. Hold-to-2x & Double-Tap Long Press (Touchscreen, Laptop Touchpad, Mouse left-click)
+        // Guard: On YouTube, YouTube ALREADY has its own native hold-to-2x for mouse/touchpad gestures.
+        // We defer to YouTube's native gesture engine to completely eliminate duplicate 2x badges and stuck overlays!
+        if (isYouTubePage() && e.pointerType === 'mouse') {
+            return;
+        }
+
         // Guard: ignore non-primary mouse buttons or modifier keys (Right-click or Shift+Drag is for mouse drag gesture)
         if (e.pointerType === 'mouse' && (e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey)) {
             return;
@@ -6470,6 +6495,8 @@
     }, { capture: true, passive: false });
 
     function releaseGesturePointerAndHoldBoost(e) {
+        dismissYouTubeSpeedmasterOverlay();
+
         if (e && e.pointerType === 'touch') {
             releaseGesturePointer(e);
         }
@@ -6479,12 +6506,9 @@
             armClickSuppression();
             releaseTemporaryBoost();
             lastTapTimestamp = 0;
-            if (e && e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e?.stopPropagation?.(); } catch (_) {}
-            try { e?.stopImmediatePropagation?.(); } catch (_) {}
-            return;
+            // CRITICAL: NEVER swallow pointerup or mouseup with stopPropagation!
+            // Passing pointerup / mouseup through to the player allows YouTube to dismiss
+            // its native 2x top indicator the exact instant you lift your finger!
         }
 
         // 2. Normal pointer candidate release
@@ -6546,24 +6570,6 @@
 
     window.addEventListener('click', suppressClickEvent, true);
     document.addEventListener('click', suppressClickEvent, true);
-    window.addEventListener('mouseup', e => {
-        if (suppressNextClick) {
-            if (e && e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e?.stopPropagation?.(); } catch (_) {}
-            try { e?.stopImmediatePropagation?.(); } catch (_) {}
-        }
-    }, true);
-    document.addEventListener('mouseup', e => {
-        if (suppressNextClick) {
-            if (e && e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e?.stopPropagation?.(); } catch (_) {}
-            try { e?.stopImmediatePropagation?.(); } catch (_) {}
-        }
-    }, true);
 
     function isOverPlayerControl(e, targetVideo = null) {
         if (eventIsInsideController(e)) return true;
@@ -6722,6 +6728,7 @@
     }
 
     function endRateGuardPress(reason) {
+        dismissYouTubeSpeedmasterOverlay();
         const g = rateGuard;
         if (!g || g.phase !== 'pressed') return;
         const held = performance.now() - g.downAt;
