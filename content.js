@@ -5957,34 +5957,44 @@
         holding2xStyleEl = document.createElement('style');
         holding2xStyleEl.id = 'mvc-holding-2x-style';
         holding2xStyleEl.textContent = `
-            html.mvc-holding-2x .ytp-chrome-bottom,
-            html.mvc-holding-2x .ytp-chrome-top,
-            html.mvc-holding-2x .ytp-gradient-bottom,
-            html.mvc-holding-2x .ytp-gradient-top,
+            /* Hide ONLY the seekbar and scrubber timeline during 2x temporary boost */
             html.mvc-holding-2x .ytp-progress-bar-container,
+            html.mvc-holding-2x .ytp-progress-bar,
             html.mvc-holding-2x .ytp-timed-markers-container,
             html.mvc-holding-2x .ytp-scrubber-container,
-            html.mvc-holding-2x .vjs-control-bar,
-            html.mvc-holding-2x .jw-controls,
-            html.mvc-holding-2x .jw-controlbar,
-            html.mvc-holding-2x .plyr__controls,
-            html.mvc-holding-2x .art-controls,
-            html.mvc-holding-2x .art-bottom,
-            html.mvc-holding-2x [class*="control-bar" i],
-            html.mvc-holding-2x [class*="controls-bar" i],
-            html.mvc-holding-2x [class*="player-controls" i],
-            html.mvc-holding-2x [class*="video-controls" i],
-            html.mvc-holding-2x [class*="progress-bar" i],
-            html.mvc-holding-2x [class*="progress-container" i],
-            html.mvc-holding-2x [class*="seekbar" i],
-            html.mvc-holding-2x [class*="seek-bar" i],
-            html.mvc-holding-2x [class*="scrub" i],
-            html.mvc-holding-2x [class*="bottom-controls" i],
-            html.mvc-holding-2x [class*="media-controls" i] {
+            html.mvc-holding-2x .vjs-progress-control,
+            html.mvc-holding-2x .jw-slider-time,
+            html.mvc-holding-2x .plyr__progress,
+            html.mvc-holding-2x .art-control-progress,
+            html.mvc-holding-2x .art-progress,
+            html.mvc-holding-2x progress,
+            html.mvc-holding-2x .seekbar,
+            html.mvc-holding-2x .seek-bar,
+            html.mvc-holding-2x [class*="seekbar" i]:not(video):not([class*="player" i]),
+            html.mvc-holding-2x [class*="seek-bar" i]:not(video):not([class*="player" i]) {
                 opacity: 0 !important;
                 visibility: hidden !important;
                 pointer-events: none !important;
                 transition: opacity 0.12s ease, visibility 0.12s ease !important;
+            }
+
+            /* Unbreakable safeguard: the video element and its player tree MUST NEVER be hidden during 2x boost */
+            html.mvc-holding-2x video,
+            html.mvc-holding-2x .html5-main-video,
+            html.mvc-holding-2x .html5-video-container,
+            html.mvc-holding-2x #movie_player,
+            html.mvc-holding-2x ytd-player,
+            html.mvc-holding-2x #player,
+            html.mvc-holding-2x #player-container,
+            html.mvc-holding-2x #player-container-outer,
+            html.mvc-holding-2x #player-container-inner,
+            html.mvc-holding-2x #primary,
+            html.mvc-holding-2x #primary-inner,
+            html.mvc-holding-2x #columns,
+            html.mvc-holding-2x ytd-watch-flexy {
+                opacity: 1 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
             }
         `;
         try {
@@ -5995,14 +6005,6 @@
     function applyHolding2xClass() {
         ensureHolding2xStyle();
         document.documentElement.classList.add('mvc-holding-2x');
-        if (isYouTubePage()) {
-            try {
-                const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                if (player) {
-                    player.classList.add('ytp-autohide');
-                }
-            } catch (_) {}
-        }
     }
 
     function removeHolding2xClass() {
