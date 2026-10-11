@@ -428,10 +428,8 @@
     let lastTapTimestamp = 0;
     let lastTapX = 0;
     let lastTapY = 0;
-    let isDoubleTapCandidate = false;
     const DOUBLE_TAP_MAX_GAP_MS = 380;
-    const DOUBLE_TAP_HOLD_DELAY_MS = 140;
-    const SINGLE_HOLD_DELAY_MS = 280;
+    const SINGLE_HOLD_DELAY_MS = 450;
     const HOLD_MAX_MOVE_PX = 22;
 
     // Mouse speed drag state (moving mouse in opposite directions to inc/dec speed)
@@ -5801,28 +5799,52 @@
         // Guard: ignore if over player control bar or scrubber
         if (isOverPlayerControl(e, target)) return;
 
-        // Detect if this is the second tap of a double tap
+        // Detect if this is the second tap of a double tap (e.g. for fullscreen)
         const now = performance.now();
         const dt = now - lastTapTimestamp;
         const dist = Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY);
         const isDoubleTap = (dt > 40 && dt < DOUBLE_TAP_MAX_GAP_MS && dist < 45);
 
-        isDoubleTapCandidate = isDoubleTap;
+        if (isDoubleTap) {
+            // User is double-clicking / double-tapping to toggle fullscreen!
+            // Cancel hold boost candidate immediately and NEVER hijack double-tap!
+            cancelHoldBoostTimer();
+            abortHoldBoostCandidate();
+            lastTapTimestamp = 0;
+            return;
+        }
+
         holdBoostPointerId = e.pointerId;
         holdBoostVideo = target;
         holdBoostStartPos = { x: e.clientX, y: e.clientY };
         holdBoostDownTime = now;
 
         cancelHoldBoostTimer();
-        const holdDelay = isDoubleTap ? DOUBLE_TAP_HOLD_DELAY_MS : SINGLE_HOLD_DELAY_MS;
 
         holdBoostTimer = setTimeout(() => {
             holdBoostTimer = null;
             if (holdBoostPointerId === e.pointerId && holdBoostVideo) {
-                engageTemporaryBoost(holdBoostVideo, isDoubleTapCandidate ? 'double-tap' : 'pointer', 2.0);
+                engageTemporaryBoost(holdBoostVideo, 'pointer', 2.0);
                 armClickSuppression();
             }
-        }, holdDelay);
+        }, SINGLE_HOLD_DELAY_MS);
+    }, true);
+
+    // Double-click to toggle fullscreen fallback
+    document.addEventListener('dblclick', e => {
+        if (eventIsInsideController(e)) return;
+        const target = findVideoAtPoint(e.clientX, e.clientY) || getVideo();
+        if (!target || !target.isConnected) return;
+        if (isOverPlayerControl(e, target)) return;
+
+        // If the native player hasn't toggled fullscreen within 150ms, trigger toggleFullscreen fallback:
+        const wasFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        setTimeout(() => {
+            const isFsNow = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+            if (isFsNow === wasFs) {
+                toggleFullscreen();
+            }
+        }, 150);
     }, true);
 
     document.addEventListener('pointermove', e => {
