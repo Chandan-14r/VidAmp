@@ -2,18 +2,24 @@
 
 <div align="center">
   <img src="icons/icon512.png" width="128" height="128" alt="VidAmp Logo" style="border-radius: 28px; box-shadow: 0 12px 36px rgba(56, 189, 248, 0.45);" />
-  <h2>VidAmp- Universal Video Enhancer & Speed Controller</h2>
+  <h2>VidAmp — Universal Video Enhancer & Speed Controller</h2>
   <p><strong>The modern video powerhouse for Chrome, Edge, Brave, Firefox, Opera, and Arc.</strong></p>
 
   <p>
-    <a href="#-key-features"><img src="https://img.shields.io/badge/Manifest-V3-blue.svg?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Manifest V3" /></a>
-    <a href="#-universal-multi-browser-support"><img src="https://img.shields.io/badge/Browsers-Chrome%20%7C%20Edge%20%7C%20Brave%20%7C%20Firefox-orange?style=for-the-badge" alt="Cross-Browser" /></a>
+    <a href="https://github.com/Chandan-14r/VidAmp/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-Passing-brightgreen.svg?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI Status" /></a>
+    <a href="#-automated-testing--code-quality"><img src="https://img.shields.io/badge/Tests-43%20Passing-success?style=for-the-badge&logo=vitest&logoColor=white" alt="Vitest Tests" /></a>
+    <a href="#-typescript-architecture"><img src="https://img.shields.io/badge/TypeScript-Strict-blue.svg?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript Strict" /></a>
+    <a href="https://github.com/Chandan-14r/VidAmp/releases/latest"><img src="https://img.shields.io/badge/Release-v6.2.0-purple.svg?style=for-the-badge" alt="Latest Release" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="MIT License" /></a>
-    <img src="https://img.shields.io/badge/Version-6.1.1-purple.svg?style=for-the-badge" alt="Version 6.1.1" />
   </p>
 
   <p>
-    <em>Precision touchpad gestures, 1-click speed popover, universal ambient glow, studio bass & vocal boost, frame stepper, smart media downloader, and instant WebM clip exporter.</em>
+    <em>Precision touchpad gestures, 600% super boost with brickwall limiter, universal ambient glow, studio EQ presets, 60fps frame stepper, smart media downloader, and instant WebM clip exporter.</em>
+  </p>
+
+  <p>
+    <a href="https://github.com/Chandan-14r/VidAmp/releases/download/v6.2.0/VidAmp-v6.2.0-Chrome-Edge-Brave.zip"><strong>📥 Download Chrome/Edge/Brave Package (.zip)</strong></a> •
+    <a href="https://github.com/Chandan-14r/VidAmp/releases/download/v6.2.0/VidAmp-v6.2.0-Firefox.zip"><strong>🦊 Download Firefox Package (.zip)</strong></a>
   </p>
 </div>
 
@@ -21,31 +27,69 @@
 
 ## 🌟 Why VidAmp?
 
-**VidAmp** transforms video playback into a modern, cinematic, and effortless experience across the web. Whether you are studying YouTube lectures at **1.4×**, watching films with dynamic **Ambient Glow**, boosting quiet dialogue with **Vocal Clarity**, frame-stepping through action scenes, or downloading videos on generic HTML5 sites, VidAmp puts professional controls right at your fingertips without cluttering the screen.
+**VidAmp** transforms video playback into a modern, cinematic, and effortless experience across the web. Whether you are studying YouTube lectures at **1.4×**, watching films with dynamic **Ambient Glow**, boosting quiet dialogue with **Vocal Clarity**, frame-stepping through action scenes at true 60fps, or exporting video clips directly from A-B loops, VidAmp puts professional controls right at your fingertips without cluttering the screen.
+
+---
+
+## 🏗️ Architecture & Decoupled Modules
+
+VidAmp is built on a clean, decoupled TypeScript architecture with high unit-test coverage:
+
+```mermaid
+flowchart TD
+    subgraph UI ["User Interface Layer"]
+        HUD["Draggable HUD Panel"]
+        Toolbar["Below-Video Floating Toolbar"]
+        SideDock["Side Tab Dock"]
+        Toast["Non-Intrusive Floating Toast"]
+    end
+
+    subgraph Core ["Core & Platform Layer"]
+        Config["Config & Prefs"]
+        Storage["Reactive Storage Sync"]
+        Logger["Scoped VidAmp Logger"]
+        YouTubeAdapter["YouTube SPA & Speedmaster Suppressor"]
+    end
+
+    subgraph Engines ["Audio & Video Engines"]
+        AudioEngine["Web Audio API Pipeline (600% Gain + Limiter)"]
+        EQPresets["8 Studio EQ Presets"]
+        MonoDownmix["Dual-Ear Mono Downmix"]
+        FPSDetector["60fps / 24fps Media Detector"]
+        FrameStepper["Precision Frame Stepper"]
+        LoopRepeater["A-B Loop Repeater & Clip Exporter"]
+        TrackpadGestures["Trackpad Swipe & Pinch Classifier"]
+        AmbientGlow["Universal Ambient Glow (Canvas Halo)"]
+    end
+
+    UI --> Core
+    Core --> Engines
+```
 
 ---
 
 ## 🚀 Key Features
 
 ### 1. ⚡ Touchpad Gestures & Precision Speed Controller
-* **Trackpad Pinch-to-Speed**: Two-finger pinch with deliberate threshold protection so normal page scrolling never accidentally alters your speed.
+* **Trackpad Pinch-to-Speed**: Two-finger pinch with deliberate threshold protection so normal vertical page scrolling is never accidentally hijacked.
 * **1-Click Speed Popover**: Direct 1-click access to presets: `0.5×`, `0.75×`, `1×`, `1.25×`, `1.4×`, `1.5×`, `1.75×`, `2×`, `2.5×`, `3×`, `4×`.
-* **Hold-to-2× with Rate-Guard**: Click & hold to temporarily boost to 2×; releasing immediately restores your exact previous rate (e.g. `1.4×`).
-* **Anti-Drift Speed Lock**: Prevents streaming sites (DASH/HLS players) from drifting your playback rate away from your desired speed.
+* **Hold-to-2× with Rate-Guard**: Click & hold to temporarily boost to 2×; releasing immediately restores your exact previous rate.
+* **Elimination of Sticky YouTube Overlays**: Completely strips YouTube's native lingering 2x pill using CSS suppression and MutationObserver DOM pruning.
 
-### 2. 🔊 Audio Superpowers (Studio Web Audio EQ)
-* **Bass Boost (+7dB Low-Shelf)**: Sub-bass enhancement under 140Hz for movies, action scenes, and music.
-* **Vocal Clarity (+6dB Speech Peaking)**: Tuned peaking filter at 2.4kHz specifically optimized for podcasts, tutorials, and dialogue.
-* **Volume Boost**: Amplify quiet videos up to 200% safely without distortion using the Web Audio API.
+### 2. 🔊 Audio Superpowers (Studio Web Audio EQ & 600% Super Boost)
+* **600% Super Volume Boost**: Amplify whisper-quiet videos up to 600% using an internal Web Audio API gain node.
+* **Brickwall Peak Limiter**: `-1.5 dBFS` brickwall compressor prevents digital clipping and speaker distortion at extreme volume levels.
+* **8 Studio EQ Presets**: Normal (Flat), Vocal Clarity, Bass Boost Max, Treble Booster, Podcast Speech, Music Master, Night Mode, and Cinema Surround.
+* **Dual-Ear Mono Downmix**: Downmixes single-ear or unbalanced stereo audio equally into both headphones.
 
 ### 3. 🌌 Universal Ambient Glow (Dynamic Bias Lighting)
 * Real-time bias lighting aura rendered behind any HTML5 video player.
 * Sampled at 32×18 and throttled at 20fps with GPU-accelerated CSS blur (`<0.2ms` GPU frame time) for zero dropped frames and zero CPU lag.
 * Toggle with `Shift + A` or from the Below-Video Toolbar.
 
-### 4. ⏱️ Frame-by-Frame Stepper
-* Step forward or backward 1 exact frame (~0.033s).
-* On-screen badge displays timestamp with millisecond precision (`HH:MM:SS.mmm`).
+### 4. ⏱️ 60fps Frame-by-Frame Stepper
+* Dynamic framerate detection calculates true framerate (24fps, 30fps, 60fps) from decoded playback quality metrics.
+* On 60fps videos, steps precisely at ~0.01667s per frame without skipping.
 * Shortcuts: `.` (step forward) and `,` (step backward).
 
 ### 5. 🎬 Mini-Clip / WebM Exporter (from A-B Loop)
@@ -62,10 +106,10 @@
 * Stored persistently per video in `browser.storage.local`.
 * Interactive popover lets you jump to timestamps or delete bookmarks with one click.
 
-### 8. 🌙 Sleep Timer (Auto-Pause with Volume Fade)
+### 8. 🌙 Sleep Timer (Auto-Pause with Volume Fade & Countdown Badge)
 * Fall asleep watching videos without running them all night.
 * Cycles: **15m → 30m → 45m → 60m → End of Video → Off**.
-* Gentle 3-second volume fade before pausing. Shortcut: `Shift + S`.
+* Live countdown indicator displayed directly on the HUD button and toolbar tooltip.
 
 ---
 
@@ -73,93 +117,80 @@
 
 A sleek translucent obsidian floating bar anchored right below videos covering ≥25% of the screen:
 
-| Icon | Tool | Description |
-|:---:|:---|:---|
-| 🔁 | **Loop Video** | Toggle continuous single-video loop |
-| 🔊 | **Volume Booster** | Amplify volume up to 200% |
-| 🎚️ | **Bass & Vocal EQ** | Click: Bass +7dB, Right-Click: Vocal +6dB |
-| 🎬 | **Cinema Mode** | Dim page background to spotlight the video |
-| 🌌 | **Ambient Glow** | Universal dynamic bias lighting halo |
-| 📐 | **Aspect Ratio** | 21:9 ultrawide crop, stretch-to-fill, 16:9 fit |
-| ⏱️ | **Speed Pill** | Live speed display + 1-click popover (including 1.4×) |
-| ✨ | **Video Filters** | Reset or cycle visual filters (HDR / Contrast) |
-| 📸 | **Screenshot** | Instant full-resolution PNG/JPEG frame capture |
-| ⚗️ | **A-B Loop** | Set Point A, Point B, and repeat segment |
-| 🎬 | **Export Clip** | Save loop segment as a `.webm` video |
-| 📥 | **Download Video** | Direct media downloader on HTML5 video sites |
-| 📌 | **Bookmarks** | Save and jump between video timestamps |
-| 🌙 | **Sleep Timer** | Auto-pause countdown with volume fade |
-| ⚙️ | **Video Tools** | Open full floating controller HUD |
+| Icon | Tool | Description | Shortcut |
+|:---:|:---|:---|:---|
+| 🔁 | **Loop Video** | Toggle continuous single-video loop | `Shift + L` |
+| 🔊 | **Volume Booster** | Left-Click: 600% Loud Boost, Right-Click: Mute | `B` |
+| 🎚️ | **Studio Presets & Mono** | Left-Click: Cycle Presets, Right-Click: Mono Audio | `V` / `Shift + M` |
+| 🎬 | **Cinema Mode** | Dim page background to spotlight the video | `Shift + C` |
+| 🌌 | **Ambient Glow** | Universal dynamic bias lighting halo | `Shift + A` |
+| 📺 | **Web Theater Mode** | Fill browser window with player | `T` |
+| 🪟 | **Picture-in-Picture** | Detach player to floating window | `P` |
+| 📐 | **Aspect Ratio** | 21:9 ultrawide crop, stretch-to-fill, 16:9 fit | — |
+| 🖥️ | **Fullscreen** | Enter native fullscreen mode | `F` |
+| ⏱️ | **Speed Pill** | Live speed display + 1-click popover (0.5×–4.0×) | `[` / `]` |
+| ✨ | **Video Filters** | Reset or cycle visual filters (HDR / Contrast) | — |
+| 📸 | **Screenshot** | Instant full-resolution PNG/JPEG frame capture | `Shift + S` |
+| ⚗️ | **A-B Loop** | Set Point A, Point B, and repeat segment | `Shift + [` / `Shift + ]` |
+| 🎬 | **Export Clip** | Save loop segment as a `.webm` video | — |
+| 📥 | **Download Video** | Direct media downloader on HTML5 video sites | — |
+| 📌 | **Bookmarks** | Left-Click: Save timestamp, Right-Click: List | `Shift + B` |
+| 🌙 | **Sleep Timer** | Auto-pause countdown with volume fade | — |
+| ⚙️ | **Video Tools** | Open full floating controller HUD | `Alt + T` |
 
 ---
 
-## ⌨️ Complete Keyboard Shortcuts
+## 🧪 Automated Testing & Code Quality
 
-| Shortcut | Action |
-|:---|:---|
-| `Space` | Play / Pause (guaranteed single toggle without repeat) |
-| `←` / `→` | Seek backward / forward (configurable 5s, 10s, 15s, 30s) |
-| `[` / `]` | Decrease / increase speed snapped to 0.25 grid |
-| `.` / `>` | **Step forward 1 frame (~0.033s)** |
-| `,` / `<` | **Step backward 1 frame (~0.033s)** |
-| `R` | Reset playback speed to `1.0×` |
-| `A` | Set Loop Point A |
-| `B` | Set Loop Point B |
-| `C` | Clear A-B loop points |
-| `Shift + B` | **Bookmark current timestamp** |
-| `Shift + A` | **Toggle Universal Ambient Glow** |
-| `Shift + S` | **Cycle Sleep Timer (15m / 30m / 45m / 60m / End)** |
-| `M` | Mute / Unmute audio |
-| `P` | Toggle Picture-in-Picture |
-| `F` | Toggle fullscreen mode |
-| `Shift + ↑` / `Shift + ↓` | Volume up / down (+/- 5%) |
-| `Shift + →` / `Shift + ←` | Speed up / down (+/- 0.25×) |
-| `Alt + B` | Show / Hide VidAmp floating tools panel |
-| `?` | Toggle shortcuts cheatsheet overlay |
-| `Esc` | Close cheatsheet or floating panel |
+VidAmp maintains strict quality assurance with automated test suites:
 
----
+```bash
+# Run Vitest unit tests (43 unit tests)
+npm test
 
-## 🌐 Universal Multi-Browser Installation
+# Run strict TypeScript typechecking
+npm run typecheck
 
-VidAmp is built on cross-browser Manifest V3 architecture, running natively across all major browsers:
+# Package distribution zips for Chrome & Firefox
+npm run package
+```
 
-### 1. Google Chrome & Chromium
-1. Clone or download this repository.
-2. Open `chrome://extensions/` in your browser.
-3. Turn on **Developer mode** (toggle in the top-right corner).
-4. Click **Load unpacked** and select this project folder.
+```
+✓ tests/trackpad.test.ts (8 tests)
+✓ tests/eq-presets.test.ts (6 tests)
+✓ tests/speed-grid.test.ts (5 tests)
+✓ tests/volume.test.ts (7 tests)
+✓ tests/gain-limiter.test.ts (4 tests)
+✓ tests/fps-detector.test.ts (5 tests)
+✓ tests/time-formatter.test.ts (5 tests)
+✓ tests/loop-repeater.test.ts (3 tests)
 
-### 2. Microsoft Edge
-1. Open `edge://extensions/`.
-2. Enable **Developer mode** in the left sidebar.
-3. Click **Load unpacked** and select this project folder.
-
-### 3. Brave Browser
-1. Open `brave://extensions/`.
-2. Toggle on **Developer mode**.
-3. Click **Load unpacked** and select this project folder.
-
-### 4. Mozilla Firefox (v109+)
-1. Open `about:debugging#/runtime/this-firefox`.
-2. Click **Load Temporary Add-on...**.
-3. Select `manifest.json` inside this project folder.
-
-### 5. Arc, Opera & Vivaldi
-1. Open your browser's extension management page (`arc://extensions`, `opera://extensions`, or `vivaldi://extensions`).
-2. Enable **Developer mode** and select **Load unpacked**.
+Test Files  8 passed (8)
+     Tests  43 passed (43)
+```
 
 ---
 
-## 🔒 Privacy & Permissions
+## 🌐 Installation & Distribution
 
-* **100% Local Execution**: VidAmp runs entirely within your browser. No external API calls, no third-party servers, and zero telemetric tracking.
-* **Minimal Permissions**:
-  * `storage`: Persists your playback speed, volume, and bookmark preferences locally.
-  * `activeTab`: Allows interaction with active video players when triggered.
+### Option A: Direct Extension Install from Release
+1. Download `VidAmp-v6.2.0-Chrome-Edge-Brave.zip` (for Chromium browsers) or `VidAmp-v6.2.0-Firefox.zip` from the [Latest Release](https://github.com/Chandan-14r/VidAmp/releases/latest).
+2. Unzip into a folder.
+3. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`).
+4. Enable **Developer Mode** in the top right.
+5. Click **Load Unpacked** and select the unzipped directory.
+
+### Option B: Local Development from Source
+```bash
+git clone https://github.com/Chandan-14r/VidAmp.git
+cd VidAmp
+npm install
+npm test
+npm run package
+```
 
 ---
 
 ## 📄 License
 
-This project is licensed under the [MIT License](LICENSE) © 2026 Chandan.
+Distributed under the [MIT License](LICENSE).
