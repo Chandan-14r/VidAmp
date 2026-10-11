@@ -29,7 +29,12 @@ with open('manifest.json', 'r') as mf:
 chrome_zip = f'dist/VidAmp-v{version}-Chrome-Edge-Brave.zip'
 with zipfile.ZipFile(chrome_zip, 'w', zipfile.ZIP_DEFLATED) as z:
     for f in files_to_pack:
-        z.write(f, arcname=f)
+        if f == 'manifest.json':
+            chrome_manifest = dict(manifest_data)
+            chrome_manifest.pop('browser_specific_settings', None)
+            z.writestr('manifest.json', json.dumps(chrome_manifest, indent=2))
+        else:
+            z.write(f, arcname=f)
 print(f"Created {chrome_zip} ({os.path.getsize(chrome_zip)} bytes)")
 
 # Package 2: Firefox Add-ons (AMO)

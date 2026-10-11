@@ -166,13 +166,13 @@
             ? Math.max(0, Math.min(2, Number(loadValue(siteKey('volume'), 1))))
             : 1,
         muted: Boolean(loadValue(siteKey('muted'), false)),
-        seekSeconds: validSeek(loadValue(siteKey('seekSeconds'), 10)) ? Number(loadValue(siteKey('seekSeconds'), 10)) : 10,
+        seekSeconds: validSeek(loadValue(siteKey('seekSeconds'), loadValue('seekSeconds', 10))) ? Number(loadValue(siteKey('seekSeconds'), loadValue('seekSeconds', 10))) : 10,
         shortcuts: loadValue('shortcuts', true) !== false,
 
         pos: loadValue('pos', null),
         pinned: Boolean(loadValue('pinned', false)),
         manualPos: Boolean(loadValue('manualPos', false)),
-        showToolbar: false, // Default: toolbar is strictly on-demand, only shown when clicking the VidAmp side dropdown
+        showToolbar: Boolean(loadValue('showToolbar', false)),
         sideTabEnabled: Boolean(loadValue('sideTabEnabled', false)), // Floating tab is disabled by default so it never obstructs video buttons
 
         // Enhanced feature flags & settings
@@ -188,6 +188,7 @@
         autoTheater: Boolean(loadValue('autoTheater', false)),
         audioPreset: loadValue('audioPreset', 'normal') || 'normal',
         monoAudioActive: Boolean(loadValue('monoAudioActive', false)),
+        ambientGlowEnabled: Boolean(loadValue('ambientGlowEnabled', false)),
 
         // Filter values (per session/site)
         brightness: Number(loadValue(siteKey('brightness'), 100)) || 100,
@@ -243,6 +244,7 @@
             '#movie_player video.html5-main-video',
             '#movie_player video',
             'ytd-watch-flexy video.html5-main-video',
+            'ytd-watch-grid video.html5-main-video',
             'ytd-reel-video-renderer[is-active] video',
             'video.html5-main-video'
         ];
@@ -290,7 +292,7 @@
             if (depth < MAX_DEPTH) {
                 let playerHosts = [];
                 try {
-                    playerHosts = [...root.querySelectorAll('[class*="player"], [id*="player"], video-js, media-player, ytd-player, ytd-watch-flexy')];
+                    playerHosts = [...root.querySelectorAll('[class*="player"], [id*="player"], video-js, media-player, ytd-player, ytd-watch-flexy, ytd-watch-grid')];
                 } catch (_) {}
 
                 for (const el of playerHosts) {
@@ -574,6 +576,28 @@
             compRatio: 12,
             compKnee: 14
         },
+        treble: {
+            id: 'treble',
+            name: 'Treble Booster',
+            icon: '✨',
+            bassGain: -2.0,
+            vocalGain: 1.0,
+            trebleGain: 8.0,
+            compThreshold: -8,
+            compRatio: 8,
+            compKnee: 10
+        },
+        podcast: {
+            id: 'podcast',
+            name: 'Podcast Speech',
+            icon: '🎙️',
+            bassGain: -4.0,
+            vocalGain: 7.5,
+            trebleGain: 2.0,
+            compThreshold: -14,
+            compRatio: 12,
+            compKnee: 12
+        },
         music: {
             id: 'music',
             name: 'Music Master',
@@ -609,7 +633,34 @@
         }
     };
 
-    const audioNodes = new WeakMap(); // HTMLMediaElement -> { ctx, source, gain, bassFilter, vocalFilter, trebleFilter, compressor }
+    const audioNodes = new WeakMap(); // HTMLMediaElement -> { ctx, source, gain, bassFilter, vocalFilter, trebleFilter, compressor, monoNode }
+    let sharedAudioCtx = null;
+
+    function getSharedAudioContext() {
+        if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            try {
+                sharedAudioCtx = new AudioCtx();
+            } catch (err) {
+                dbg('Failed to create AudioContext:', err);
+                return null;
+            }
+        }
+        return sharedAudioCtx;
+    }
+
+    function isMediaCrossOrigin(v) {
+        if (!v) return false;
+        const src = v.currentSrc || v.src;
+        if (!src || src.startsWith('blob:') || src.startsWith('data:')) return false;
+        try {
+            const url = new URL(src, window.location.href);
+            return url.origin !== window.location.origin && !v.crossOrigin;
+        } catch (_) {
+            return false;
+        }
+    }
 
     function getOrCreateAudioBoostNode(v) {
         if (!v) return null;
@@ -621,11 +672,15 @@
             return entry;
         }
 
-        try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return null;
+        if (isMediaCrossOrigin(v)) {
+            dbg('Web Audio skipped: Media is cross-origin without CORS authorization');
+            return null;
+        }
 
-            const ctx = new AudioCtx();
+        try {
+            const ctx = getSharedAudioContext();
+            if (!ctx) return null;
+
             const source = ctx.createMediaElementSource(v);
 
             // BiquadFilter: Low-shelf for Bass Boost (120Hz)
@@ -659,33 +714,33 @@
                 compressor.release.value = 0.25;
             }
 
-            // Routing Chain: source -> bassFilter -> vocalFilter -> trebleFilter -> gain -> (compressor) -> destination
+            // Intermediate stereo/mono downmix node (sums L+R cleanly into both headphones)
+            const monoNode = ctx.createGain();
+            monoNode.channelCount = monoAudioActive ? 1 : 2;
+            monoNode.channelCountMode = 'explicit';
+            monoNode.channelInterpretation = 'speakers';
+
+            // Routing Chain: source -> bassFilter -> vocalFilter -> trebleFilter -> gain -> (compressor) -> monoNode -> destination
             source.connect(bassFilter);
             bassFilter.connect(vocalFilter);
             vocalFilter.connect(trebleFilter);
             trebleFilter.connect(gain);
             if (compressor) {
                 gain.connect(compressor);
-                compressor.connect(ctx.destination);
+                compressor.connect(monoNode);
             } else {
-                gain.connect(ctx.destination);
+                gain.connect(monoNode);
             }
+            monoNode.connect(ctx.destination);
 
-            if (monoAudioActive && ctx.destination) {
-                try {
-                    ctx.destination.channelCount = 1;
-                    ctx.destination.channelCountMode = 'explicit';
-                } catch (_) {}
-            }
-
-            entry = { ctx, source, gain, bassFilter, vocalFilter, trebleFilter, compressor };
+            entry = { ctx, source, gain, bassFilter, vocalFilter, trebleFilter, compressor, monoNode };
             audioNodes.set(v, entry);
 
             // Apply active preset parameters
             applyPresetToNodeEntry(entry, AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal);
 
             if (ctx.state === 'suspended') {
-                ctx.resume().catch(() => {});
+                entry.ctx.resume().catch(() => {});
             }
             return entry;
         } catch (err) {
@@ -697,14 +752,17 @@
     function applyPresetToNodeEntry(entry, preset) {
         if (!entry || !preset) return;
         const now = entry.ctx.currentTime || 0;
+        const compThresh = preset.compThreshold !== undefined ? preset.compThreshold : -8;
+        const compRat = preset.compRatio !== undefined ? preset.compRatio : 12;
+        const compKn = preset.compKnee !== undefined ? preset.compKnee : 10;
         try {
             if (entry.bassFilter) entry.bassFilter.gain.setTargetAtTime(preset.bassGain || 0, now, 0.02);
             if (entry.vocalFilter) entry.vocalFilter.gain.setTargetAtTime(preset.vocalGain || 0, now, 0.02);
             if (entry.trebleFilter) entry.trebleFilter.gain.setTargetAtTime(preset.trebleGain || 0, now, 0.02);
             if (entry.compressor) {
-                entry.compressor.threshold.setTargetAtTime(preset.compThreshold || -8, now, 0.02);
-                entry.compressor.ratio.setTargetAtTime(preset.compRatio || 12, now, 0.02);
-                entry.compressor.knee.setTargetAtTime(preset.compKnee || 10, now, 0.02);
+                entry.compressor.threshold.setTargetAtTime(compThresh, now, 0.02);
+                entry.compressor.ratio.setTargetAtTime(compRat, now, 0.02);
+                entry.compressor.knee.setTargetAtTime(compKn, now, 0.02);
             }
         } catch (_) {
             try {
@@ -712,9 +770,9 @@
                 if (entry.vocalFilter) entry.vocalFilter.gain.value = preset.vocalGain || 0;
                 if (entry.trebleFilter) entry.trebleFilter.gain.value = preset.trebleGain || 0;
                 if (entry.compressor) {
-                    entry.compressor.threshold.value = preset.compThreshold || -8;
-                    entry.compressor.ratio.value = preset.compRatio || 12;
-                    entry.compressor.knee.value = preset.compKnee || 10;
+                    entry.compressor.threshold.value = compThresh;
+                    entry.compressor.ratio.value = compRat;
+                    entry.compressor.knee.value = compKn;
                 }
             } catch (_) {}
         }
@@ -732,16 +790,13 @@
 
         if (entry.compressor) {
             const currentPresetObj = AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal;
-            let targetThreshold = currentPresetObj.compThreshold;
-            let targetRatio = currentPresetObj.compRatio;
+            let targetThreshold = currentPresetObj.compThreshold !== undefined ? currentPresetObj.compThreshold : -8;
+            let targetRatio = currentPresetObj.compRatio !== undefined ? currentPresetObj.compRatio : 12;
 
-            // Adaptive limiter scaling for ultra loud boosts (300% to 600%)
-            if (vol > 3.0) {
-                targetThreshold = Math.min(targetThreshold, -16);
-                targetRatio = Math.max(targetRatio, 16);
-            } else if (vol > 2.0) {
-                targetThreshold = Math.min(targetThreshold, -12);
-                targetRatio = Math.max(targetRatio, 14);
+            if (vol > 1.0) {
+                // True brickwall peak limiter ceiling: prevents clipping while preserving maximum perceived loudness
+                targetThreshold = -1.5;
+                targetRatio = 20;
             }
 
             try {
@@ -801,12 +856,12 @@
         }
 
         // Turbo cycle: Normal -> 200% -> 300% -> 600% -> Normal
-        if (prefs.volume <= 1.0) {
-            if (prefs.volume > 0) savedNormalVolume = prefs.volume;
+        if (prefs.volume < 1.95) {
+            if (prefs.volume > 0 && prefs.volume <= 1.0) savedNormalVolume = prefs.volume;
             applyVolumeAndBoost(v, 2.0, true);
-        } else if (prefs.volume >= 1.9 && prefs.volume < 2.5) {
+        } else if (prefs.volume < 2.95) {
             applyVolumeAndBoost(v, 3.0, true);
-        } else if (prefs.volume >= 2.5 && prefs.volume < 5.5) {
+        } else if (prefs.volume < 5.95) {
             applyVolumeAndBoost(v, 6.0, true);
         } else {
             // Restore previous normal sound level
@@ -861,13 +916,7 @@
         const curStep = volumeToSoundStep(prefs.volume);
         const nextStep = Math.max(0, curStep - 1);
         if (nextStep === 0) {
-            applyVolumeAndBoost(v, 0, false);
-            v.muted = true;
-            prefs.muted = true;
-            saveValue(siteKey('muted'), true);
-            showToast('🔇 Sound: 0/20');
-            syncControlsToVideo();
-            if (toolbarBuilt) syncToolbar();
+            toggleMute(v);
         } else {
             const targetVol = soundStepToVolume(nextStep);
             applyVolumeAndBoost(v, targetVol, true);
@@ -906,88 +955,94 @@
         if (!v) v = getVideo() || document.querySelector('video');
         if (!v) return;
 
-        // 1. Unmute native HTML5 media element
-        try {
-            v.muted = false;
-            v.defaultMuted = false;
-            v.removeAttribute('muted');
-        } catch (_) {}
-
-        // 2. Determine target volume (at least sound step 1 = 0.05)
+        isInternalVolumeChange = true;
         let vol = targetVolume;
-        if (vol === null || vol === undefined) {
-            if (prefs.volume && prefs.volume > 0.05) {
-                vol = prefs.volume;
-            } else if (v.volume && v.volume > 0.05) {
-                vol = v.volume;
-            } else {
-                vol = soundStepToVolume(1); // Starts steadily from 1 (1/20 = 5%)
-            }
-        }
-        vol = Math.max(0.05, Math.min(MAX_BOOST, vol));
 
-        prefs.muted = false;
-        prefs.volume = vol;
-        saveValue(siteKey('muted'), false);
-        saveValue(siteKey('volume'), vol);
-
-        // Apply volume to element & Web Audio
-        if (vol <= 1.0) {
-            prefs.loudBoostActive = false;
-            try { v.volume = vol; } catch (_) {}
-            const entry = audioNodes.get(v);
-            if (entry) {
-                updateGainAndLimiter(entry, 1.0);
-            }
-        } else {
-            prefs.loudBoostActive = true;
-            try { v.volume = 1.0; } catch (_) {}
-            const entry = getOrCreateAudioBoostNode(v);
-            if (entry) {
-                updateGainAndLimiter(entry, vol);
-            }
-        }
-
-        // 3. YouTube player specialized unmute & volume sync
-        if (isYouTubePage()) {
+        try {
+            // 1. Unmute native HTML5 media element
             try {
-                const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                let unMutedViaApi = false;
-                if (mp && typeof mp.unMute === 'function') {
-                    mp.unMute();
-                    unMutedViaApi = true;
-                    if (typeof mp.setVolume === 'function') {
-                        mp.setVolume(Math.round(Math.min(1.0, vol) * 100));
-                    }
+                v.muted = false;
+                v.defaultMuted = false;
+                v.removeAttribute('muted');
+            } catch (_) {}
+
+            // 2. Determine target volume (at least sound step 1 = 0.05)
+            if (vol === null || vol === undefined) {
+                if (prefs.volume && prefs.volume > 0.05) {
+                    vol = prefs.volume;
+                } else if (v.volume && v.volume > 0.05) {
+                    vol = v.volume;
+                } else {
+                    vol = soundStepToVolume(1); // Starts steadily from 1 (1/20 = 5%)
                 }
-                if (!unMutedViaApi) {
-                    const ytpMuteBtn = document.querySelector('.ytp-mute-button');
-                    if (ytpMuteBtn) {
-                        const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
-                        if (label.includes('unmute')) {
-                            ytpMuteBtn.click();
+            }
+            vol = Math.max(0.05, Math.min(MAX_BOOST, vol));
+
+            prefs.muted = false;
+            prefs.volume = vol;
+            saveValue(siteKey('muted'), false);
+            saveValue(siteKey('volume'), vol);
+
+            // Apply volume to element & Web Audio
+            if (vol <= 1.0) {
+                prefs.loudBoostActive = false;
+                try { v.volume = vol; } catch (_) {}
+                const entry = audioNodes.get(v);
+                if (entry) {
+                    updateGainAndLimiter(entry, 1.0);
+                }
+            } else {
+                prefs.loudBoostActive = true;
+                try { v.volume = 1.0; } catch (_) {}
+                const entry = getOrCreateAudioBoostNode(v);
+                if (entry) {
+                    updateGainAndLimiter(entry, vol);
+                }
+            }
+
+            // 3. YouTube player specialized unmute & volume sync
+            if (isYouTubePage()) {
+                try {
+                    const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                    let unMutedViaApi = false;
+                    if (mp && typeof mp.unMute === 'function') {
+                        mp.unMute();
+                        unMutedViaApi = true;
+                        if (typeof mp.setVolume === 'function') {
+                            mp.setVolume(Math.round(Math.min(1.0, vol) * 100));
                         }
                     }
+                    if (!unMutedViaApi) {
+                        const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                        if (ytpMuteBtn) {
+                            const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                            if (label.includes('unmute')) {
+                                ytpMuteBtn.click();
+                            }
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            // 4. Dispatch HTML5 volumechange event so custom player UIs (ArtPlayer, Video.js, Plyr, etc.) sync
+            try {
+                v.dispatchEvent(new Event('volumechange', { bubbles: true }));
+            } catch (_) {}
+
+            // 5. Resume Web AudioContext if suspended
+            try {
+                const entry = audioNodes.get(v);
+                if (entry && entry.ctx && entry.ctx.state === 'suspended') {
+                    entry.ctx.resume().catch(() => {});
                 }
             } catch (_) {}
+
+            // 6. Sync UI controls and toolbar
+            syncControlsToVideo();
+            if (toolbarBuilt) syncToolbar();
+        } finally {
+            setTimeout(() => { isInternalVolumeChange = false; }, 120);
         }
-
-        // 4. Dispatch HTML5 volumechange event so custom player UIs (ArtPlayer, Video.js, Plyr, etc.) sync
-        try {
-            v.dispatchEvent(new Event('volumechange', { bubbles: true }));
-        } catch (_) {}
-
-        // 5. Resume Web AudioContext if suspended
-        try {
-            const entry = audioNodes.get(v);
-            if (entry && entry.ctx && entry.ctx.state === 'suspended') {
-                entry.ctx.resume().catch(() => {});
-            }
-        } catch (_) {}
-
-        // 6. Sync UI controls and toolbar
-        syncControlsToVideo();
-        if (toolbarBuilt) syncToolbar();
 
         return vol;
     }
@@ -996,52 +1051,59 @@
         if (!v) v = getVideo() || document.querySelector('video');
         if (!v) return;
 
-        if (isVideoMuted(v)) {
-            const curStep = volumeToSoundStep(prefs.volume);
-            const step = curStep > 0 ? curStep : 1;
-            const vol = unmuteVideo(v, soundStepToVolume(step));
-            showToast(`🔊 Sound: ${step}/20`);
-        } else {
-            v.muted = true;
-            prefs.muted = true;
-            saveValue(siteKey('muted'), true);
+        isInternalVolumeChange = true;
+        try {
+            if (isVideoMuted(v)) {
+                const curStep = volumeToSoundStep(prefs.volume);
+                const step = curStep > 0 ? curStep : 1;
+                const vol = unmuteVideo(v, soundStepToVolume(step));
+                showToast(`🔊 Sound: ${step}/20`);
+            } else {
+                v.muted = true;
+                prefs.muted = true;
+                saveValue(siteKey('muted'), true);
 
-            if (isYouTubePage()) {
-                try {
-                    const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                    let mutedViaApi = false;
-                    if (mp && typeof mp.mute === 'function') {
-                        mp.mute();
-                        mutedViaApi = true;
-                    }
-                    if (!mutedViaApi) {
-                        const ytpMuteBtn = document.querySelector('.ytp-mute-button');
-                        if (ytpMuteBtn) {
-                            const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
-                            if (!label.includes('unmute')) {
-                                ytpMuteBtn.click();
+                if (isYouTubePage()) {
+                    try {
+                        const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                        let mutedViaApi = false;
+                        if (mp && typeof mp.mute === 'function') {
+                            mp.mute();
+                            mutedViaApi = true;
+                        }
+                        if (!mutedViaApi) {
+                            const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                            if (ytpMuteBtn) {
+                                const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                                if (!label.includes('unmute')) {
+                                    ytpMuteBtn.click();
+                                }
                             }
                         }
-                    }
+                    } catch (_) {}
+                }
+
+                try {
+                    v.dispatchEvent(new Event('volumechange', { bubbles: true }));
                 } catch (_) {}
+
+                syncControlsToVideo();
+                if (toolbarBuilt) syncToolbar();
+                showToast('🔇 Sound: 0/20');
             }
-
-            try {
-                v.dispatchEvent(new Event('volumechange', { bubbles: true }));
-            } catch (_) {}
-
-            syncControlsToVideo();
-            if (toolbarBuilt) syncToolbar();
-            showToast('🔇 Sound: 0/20');
+        } finally {
+            setTimeout(() => { isInternalVolumeChange = false; }, 120);
         }
     }
 
-    function applyVolumeAndBoost(v, volumeLevel, notify = false) {
+    function applyVolumeAndBoost(v, volumeLevel, notify = false, persist = true) {
         if (!v) return;
 
         const effectiveVol = Math.max(0, Math.min(MAX_BOOST, volumeLevel));
         prefs.volume = effectiveVol;
-        saveValue(siteKey('volume'), effectiveVol);
+        if (persist) {
+            saveValue(siteKey('volume'), effectiveVol);
+        }
 
         isInternalVolumeChange = true;
         try {
@@ -1137,10 +1199,9 @@
         if (!v) v = getVideo();
         if (v) {
             const entry = getOrCreateAudioBoostNode(v);
-            if (entry && entry.ctx && entry.ctx.destination) {
+            if (entry && entry.monoNode) {
                 try {
-                    entry.ctx.destination.channelCount = monoAudioActive ? 1 : 2;
-                    entry.ctx.destination.channelCountMode = 'explicit';
+                    entry.monoNode.channelCount = monoAudioActive ? 1 : 2;
                 } catch (_) {}
             }
         }
@@ -1246,7 +1307,7 @@
 
     function handleLoopTimeUpdate(v) {
         if (!v || loopA === null || loopB === null || loopA >= loopB) return;
-        if (v.currentTime >= loopB || v.currentTime < loopA - 0.5) {
+        if (v.currentTime >= loopB && v.currentTime >= loopA) {
             setCurrentTimeNative(v, loopA);
         }
     }
@@ -1464,8 +1525,11 @@
             syncControlsToVideo();
 
             const checkClipProgress = () => {
-                if (!isRecordingClip) return;
-                if (v.currentTime >= loopB || v.currentTime < loopA - 0.5) {
+                if (!isRecordingClip) {
+                    v.removeEventListener('timeupdate', checkClipProgress);
+                    return;
+                }
+                if (v.currentTime >= loopB) {
                     v.pause();
                     if (clipMediaRecorder && clipMediaRecorder.state === 'recording') {
                         clipMediaRecorder.stop();
@@ -1819,6 +1883,9 @@
                 return titleEl.textContent.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 40);
             }
         }
+        if (document.title) {
+            return document.title.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 40) || 'screenshot';
+        }
         return 'screenshot';
     }
 
@@ -1840,6 +1907,9 @@
             canvas.height = height;
 
             const ctx = canvas.getContext('2d');
+            if (v.style && v.style.filter && v.style.filter !== 'none') {
+                ctx.filter = v.style.filter;
+            }
             ctx.drawImage(v, 0, 0, width, height);
         } catch (err) {
             dbg('Screenshot capture error:', err);
@@ -2133,8 +2203,6 @@
         [
             'play',
             'pause',
-            'volumechange',
-            'ratechange',
             'timeupdate',
             'loadedmetadata',
             'durationchange',
@@ -2151,6 +2219,11 @@
                     checkLiveStreamCatchUp(v);
                 } else if (evt === 'progress') {
                     checkLiveStreamCatchUp(v);
+                } else if (evt === 'play') {
+                    const entry = audioNodes.get(v);
+                    if (entry?.ctx?.state === 'suspended') {
+                        entry.ctx.resume().catch(() => {});
+                    }
                 }
             }, { signal });
         });
@@ -2182,13 +2255,14 @@
                 return;
             }
 
-            // If a temporary hold boost is actively engaged by our extension, ignore ratechange
-            if (holdBoostEngaged || temporaryBoostActive) {
+            // Only skip if extension's own hold boost is active
+            if (holdBoostEngaged) {
                 return;
             }
 
             // 1. Temporary 2x boost detection (YouTube native hold-to-2x)
             if (isYouTubePage() && Math.abs(n - 2.0) < 0.01) {
+                if (rateGuard) rateGuard.sawBoost = true;
                 if (Math.abs(persistentUserSpeed - 2.0) >= 0.01) {
                     temporaryBoostActive = true;
                     temporaryBoostOriginalSpeed = persistentUserSpeed;
@@ -2197,18 +2271,20 @@
                 }
             }
 
-            // 2. Temporary 2x boost released: the site (YouTube) reset rate back to 1.0
-            if (temporaryBoostActive && Math.abs(n - 1.0) < 0.01) {
+            // 2. Temporary 2x boost released: the site (YouTube) reset rate back from 2.0
+            if (temporaryBoostActive && Math.abs(n - 2.0) >= 0.01) {
                 temporaryBoostActive = false;
                 dismissYouTubeSpeedmasterOverlay();
                 const restoreRate = temporaryBoostOriginalSpeed || persistentUserSpeed || 1.0;
                 temporaryBoostOriginalSpeed = null;
 
-                try {
-                    isInternalRateChange = true;
-                    v.playbackRate = restoreRate;
-                    setTimeout(() => { isInternalRateChange = false; }, 80);
-                } catch (_) {}
+                if (Math.abs(n - restoreRate) > 0.01) {
+                    try {
+                        isInternalRateChange = true;
+                        v.playbackRate = restoreRate;
+                        setTimeout(() => { isInternalRateChange = false; }, 80);
+                    } catch (_) {}
+                }
 
                 prefs.speed = restoreRate;
                 persistentUserSpeed = restoreRate;
@@ -2394,8 +2470,17 @@
             typeof prefs.pos.left === 'string' ||
             typeof prefs.pos.top === 'string'
         ) {
-            panel.style.left = prefs.pos.left || '';
-            panel.style.top = prefs.pos.top || '';
+            const rawLeft = parseInt(prefs.pos.left, 10);
+            const rawTop = parseInt(prefs.pos.top, 10);
+            if (Number.isFinite(rawLeft) && Number.isFinite(rawTop)) {
+                const maxLeft = Math.max(8, window.innerWidth - (panel.offsetWidth || 316) - 8);
+                const maxTop = Math.max(8, window.innerHeight - (panel.offsetHeight || 260) - 8);
+                panel.style.left = `${Math.max(8, Math.min(maxLeft, rawLeft))}px`;
+                panel.style.top = `${Math.max(8, Math.min(maxTop, rawTop))}px`;
+            } else {
+                panel.style.left = prefs.pos.left || '';
+                panel.style.top = prefs.pos.top || '';
+            }
             panel.style.right = 'auto';
             panel.style.bottom = 'auto';
         } else {
@@ -3400,8 +3485,7 @@
         volumeBoostCheck.onchange = () => {
             prefs.volumeBoostEnabled = volumeBoostCheck.checked;
             saveValue('volumeBoostEnabled', prefs.volumeBoostEnabled);
-            volumeSlider.max = prefs.volumeBoostEnabled ? '2' : '1';
-            showToast(prefs.volumeBoostEnabled ? 'Volume boost on (up to 200%)' : 'Volume boost off');
+            showToast(prefs.volumeBoostEnabled ? 'Volume boost on (up to 600%)' : 'Volume boost off');
         };
 
         smartMiniplayerCheck.onchange = () => {
@@ -3904,10 +3988,8 @@
                 box-sizing: border-box;
                 pointer-events: none;
                 max-width: calc(100vw - 16px);
-                overflow-x: auto;
-                scrollbar-width: none;
+                overflow: visible;
             }
-            #mvc-toolbar-container::-webkit-scrollbar { display: none; }
             #mvc-toolbar {
                 display: inline-flex;
                 align-items: center;
@@ -4419,14 +4501,23 @@
             if (e.button !== 0) return; // Only primary left-click drag
 
             isDraggingToolbar = true;
-            const currentLeft = toolbarHost.offsetLeft || 0;
-            const currentTop = toolbarHost.offsetTop || 0;
+            const rect = tb.getBoundingClientRect();
+            if (!toolbarHost.classList.contains('mvc-floating-mode')) {
+                toolbarHost.classList.add('mvc-floating-mode');
+                document.body.appendChild(toolbarHost);
+            }
+            toolbarHost.style.setProperty('position', 'fixed', 'important');
+            toolbarHost.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');
+            toolbarHost.style.setProperty('top', `${Math.round(rect.top)}px`, 'important');
+            toolbarHost.style.setProperty('z-index', '2147483647', 'important');
+
             toolbarDragStart = {
                 mouseX: e.clientX,
                 mouseY: e.clientY,
-                hostX: currentLeft,
-                hostY: currentTop
+                hostX: rect.left,
+                hostY: rect.top
             };
+            try { tb.setPointerCapture(e.pointerId); } catch (_) {}
 
             const onPointerMove = moveEvt => {
                 if (!isDraggingToolbar || !toolbarDragStart) return;
@@ -4443,6 +4534,7 @@
             const onPointerUp = () => {
                 isDraggingToolbar = false;
                 toolbarDragStart = null;
+                try { tb.releasePointerCapture(e.pointerId); } catch (_) {}
                 window.removeEventListener('pointermove', onPointerMove, true);
                 window.removeEventListener('pointerup', onPointerUp, true);
             };
@@ -4580,6 +4672,7 @@
         if (window.self !== window.top) return;
         const nextState = typeof forceState === 'boolean' ? forceState : (!prefs.showToolbar);
         prefs.showToolbar = nextState;
+        saveValue('showToolbar', nextState);
         updateSideTabState(nextState);
         if (toolbarHost) {
             if (nextState) {
@@ -5196,7 +5289,12 @@
         closeBtn.title = 'Hide this tab (Press Alt+T to toggle toolbar, or re-enable in extension popup)';
         closeBtn.textContent = '×';
 
+        let suppressTabClick = false;
         btn.onclick = e => {
+            if (suppressTabClick) {
+                suppressTabClick = false;
+                return;
+            }
             if (e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -5243,8 +5341,16 @@
                 sideTabHost.style.setProperty('top', `${Math.round(newTop)}px`, 'important');
             };
 
-            const onUp = () => {
+            const onUp = upEvt => {
                 isDraggingSideTab = false;
+                if (sideTabDragStart) {
+                    const dx = Math.abs(upEvt.clientX - sideTabDragStart.mouseX);
+                    const dy = Math.abs(upEvt.clientY - sideTabDragStart.mouseY);
+                    if (dx > 4 || dy > 4) {
+                        suppressTabClick = true;
+                        setTimeout(() => { suppressTabClick = false; }, 100);
+                    }
+                }
                 sideTabDragStart = null;
                 window.removeEventListener('pointermove', onMove, true);
                 window.removeEventListener('pointerup', onUp, true);
@@ -6536,13 +6642,9 @@
     }
 
     window.addEventListener('pointerup', releaseGesturePointerAndHoldBoost, true);
-    document.addEventListener('pointerup', releaseGesturePointerAndHoldBoost, true);
     window.addEventListener('pointercancel', releaseGesturePointerAndHoldBoost, true);
-    document.addEventListener('pointercancel', releaseGesturePointerAndHoldBoost, true);
     window.addEventListener('mouseup', releaseGesturePointerAndHoldBoost, true);
-    document.addEventListener('mouseup', releaseGesturePointerAndHoldBoost, true);
     window.addEventListener('touchend', releaseGesturePointerAndHoldBoost, true);
-    document.addEventListener('touchend', releaseGesturePointerAndHoldBoost, true);
     window.addEventListener('blur', clearAllGesturePointers, true);
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) clearAllGesturePointers();
@@ -6569,7 +6671,6 @@
     }
 
     window.addEventListener('click', suppressClickEvent, true);
-    document.addEventListener('click', suppressClickEvent, true);
 
     function isOverPlayerControl(e, targetVideo = null) {
         if (eventIsInsideController(e)) return true;
@@ -6723,7 +6824,9 @@
             saveValue(siteKey('speed'), g.rate);
             syncControlsToVideo();
             if (toolbarBuilt) syncToolbar();
-            showToast(formatSpeed(g.rate));
+            if (g.rate !== 1.0) {
+                showToast(formatSpeed(g.rate));
+            }
         }
     }
 
@@ -6883,6 +6986,7 @@
 
         // Modifier Key 1: Shift + Wheel = Sound / Volume adjustment (0–20 scale & super volume boost)
         if (e.shiftKey) {
+            if (Math.abs(e.deltaY) < 1) return;
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
@@ -6968,25 +7072,39 @@
         );
     }
 
+    function getDeepActiveElement() {
+        let el = document.activeElement;
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+            el = el.shadowRoot.activeElement;
+        }
+        return el;
+    }
+
     function isEditableEvent(e) {
+        if (document.designMode === 'on') return true;
         const target = (e.composedPath && e.composedPath()[0]) || e.target;
-        const active = document.activeElement;
+        const active = getDeepActiveElement();
 
         const isElEditable = (el) => {
-            if (!el) return false;
+            if (!el || !(el instanceof Element)) return false;
             try {
                 if (el.isContentEditable) return true;
                 const tag = el.tagName ? el.tagName.toUpperCase() : '';
                 if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-                if (el.getAttribute && el.getAttribute('role') === 'textbox') return true;
-                if (el.closest && el.closest('input, textarea, select, [contenteditable="true"], [role="textbox"], ytd-searchbox, #search-input, #contenteditable-root')) {
+                const role = (el.getAttribute('role') || '').toLowerCase();
+                if (role === 'textbox' || role === 'searchbox' || role === 'combobox') return true;
+                if (el.closest && el.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="searchbox"], [role="combobox"], ytd-searchbox, yt-searchbox, ytd-commentbox, #search-input, #contenteditable-root')) {
                     return true;
                 }
             } catch (_) {}
             return false;
         };
 
-        return isElEditable(target) || isElEditable(active);
+        if (isElEditable(target) || isElEditable(active)) return true;
+        if (e.composedPath) {
+            return e.composedPath().some(node => isElEditable(node));
+        }
+        return false;
     }
 
     window.addEventListener('keyup', e => {
@@ -7010,7 +7128,13 @@
             // If the video was already paused on keydown, it started playing immediately on keydown!
             if (spaceWasPausedOnDown) {
                 spaceWasPausedOnDown = false;
+                const v = spaceTargetVideo || getVideo() || document.querySelector('video');
                 spaceTargetVideo = null;
+                if (spaceBoostEverEngaged) {
+                    releaseTemporaryBoost('space');
+                    spaceBoostEverEngaged = false;
+                    ensureVideoPlaying(v);
+                }
                 return;
             }
 
@@ -7117,11 +7241,17 @@
                 spaceDownTime = performance.now();
                 spaceTargetVideo = v;
                 spaceBoostEverEngaged = false;
-                if (spaceHoldTimer) {
-                    clearTimeout(spaceHoldTimer);
-                    spaceHoldTimer = null;
-                }
                 togglePlayPause(v);
+
+                // Arm 350ms hold-to-2x timer even when starting from pause!
+                clearTimeout(spaceHoldTimer);
+                spaceHoldTimer = setTimeout(() => {
+                    spaceHoldTimer = null;
+                    if (spaceTargetVideo && !isVideoPaused(spaceTargetVideo)) {
+                        spaceBoostEverEngaged = true;
+                        engageTemporaryBoost(spaceTargetVideo, 'space', 2.0);
+                    }
+                }, SPACE_HOLD_DELAY_MS);
                 return;
             }
 
@@ -7252,10 +7382,16 @@
             return;
         }
 
+        const isVideoFocused = document.activeElement && (document.activeElement === v || (v.closest && v.closest('.html5-video-player, video-js, [class*="player"]')?.contains(document.activeElement)));
+        const isHoveringVideo = Boolean(v && v.matches && v.matches(':hover'));
+        const isPanelOpen = panelBuilt && panel && panel.classList.contains('visible');
+        const isInteractiveContext = isVideoFocused || isHoveringVideo || isPanelOpen || Boolean(document.fullscreenElement);
+
         // ---------------------------------------------------------
         // Up Arrow: Sound Step Up (0–20 Scale) & Instant Unmute
         // ---------------------------------------------------------
         if ((e.key === 'ArrowUp' || e.code === 'ArrowUp') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            if (!isInteractiveContext) return;
             e.preventDefault();
             e.stopPropagation();
             try { e.stopImmediatePropagation(); } catch (_) {}
@@ -7267,6 +7403,7 @@
         // Down Arrow: Sound Step Down (0–20 Scale)
         // ---------------------------------------------------------
         if ((e.key === 'ArrowDown' || e.code === 'ArrowDown') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            if (!isInteractiveContext) return;
             e.preventDefault();
             e.stopPropagation();
             try { e.stopImmediatePropagation(); } catch (_) {}
@@ -7294,7 +7431,7 @@
                 e.preventDefault();
                 e.stopPropagation();
                 try { e.stopImmediatePropagation(); } catch (_) {}
-                toggleLoudBoost(v);
+                setPointB();
                 return;
             }
             if (e.key === 'M' || e.code === 'KeyM') {
@@ -7390,7 +7527,11 @@
             case 'B':
                 e.preventDefault();
                 e.stopPropagation();
-                toggleLoudBoost(v);
+                if (e.shiftKey) {
+                    setPointB();
+                } else {
+                    toggleLoudBoost(v);
+                }
                 break;
 
             case 'c':
@@ -7507,7 +7648,6 @@
                 } else if (key === 'volumeBoostEnabled') {
                     prefs.volumeBoostEnabled = change.newValue !== false;
                     if (volumeBoostCheck) volumeBoostCheck.checked = prefs.volumeBoostEnabled;
-                    if (volumeSlider) volumeSlider.max = prefs.volumeBoostEnabled ? '2' : '1';
                 } else if (key === 'mouseDragSpeedEnabled') {
                     prefs.mouseDragSpeedEnabled = change.newValue !== false;
                 } else if (key === 'smartMiniplayerEnabled') {
@@ -7520,6 +7660,19 @@
                     prefs.gestureReverse = Boolean(change.newValue);
                 } else if (key === 'screenshotFormat') {
                     prefs.screenshotFormat = change.newValue === 'jpeg' ? 'jpeg' : 'png';
+                } else if (key === 'autoTheater') {
+                    prefs.autoTheater = Boolean(change.newValue);
+                    if (prefs.autoTheater) checkAutoTheater();
+                } else if (key === 'seekSeconds' || key === siteKey('seekSeconds')) {
+                    const sec = Number(change.newValue);
+                    if (validSeek(sec)) {
+                        prefs.seekSeconds = sec;
+                        if (seekSelect) seekSelect.value = String(sec);
+                        const backLabel = shadow?.querySelector('#back-label');
+                        const fwdLabel = shadow?.querySelector('#forward-label');
+                        if (backLabel) backLabel.textContent = `${sec}s`;
+                        if (fwdLabel) fwdLabel.textContent = `${sec}s`;
+                    }
                 } else if (key === 'ambientGlowEnabled') {
                     if (Boolean(change.newValue) !== ambientGlowActive) {
                         toggleAmbientGlow();
@@ -7552,10 +7705,16 @@
                 } else if (key === siteKey('volume') && video) {
                     const newVol = Number(change.newValue);
                     if (!isInternalVolumeChange && Number.isFinite(newVol) && Math.abs(prefs.volume - newVol) > 0.01) {
-                        applyVolumeAndBoost(video, newVol, false);
+                        applyVolumeAndBoost(video, newVol, false, false);
                     }
                 } else if (key === siteKey('brightness') && video) {
                     prefs.brightness = Number(change.newValue) || 100;
+                    applyVideoFilters(video);
+                } else if (key === siteKey('contrast') && video) {
+                    prefs.contrast = Number(change.newValue) || 100;
+                    applyVideoFilters(video);
+                } else if (key === siteKey('saturate') && video) {
+                    prefs.saturate = Number(change.newValue) || 100;
                     applyVideoFilters(video);
                 }
             }
@@ -7583,12 +7742,18 @@
     let navRefreshTimer = null;
     function refreshAfterNavigation() {
         if (navRefreshTimer) clearTimeout(navRefreshTimer);
+        if (videoAbortController) {
+            try { videoAbortController.abort(); } catch (_) {}
+            videoAbortController = null;
+        }
         preferredVideo = null;
         video = null;
         lastActiveVideo = null;
         lastListenerVideo = null;
         loopA = null;
         loopB = null;
+        videoBookmarks = [];
+        loadVideoBookmarks();
 
         if (panelBuilt) {
             hidePanel();
@@ -7664,11 +7829,14 @@
         lastVideoScan = performance.now();
         refreshVideos({ resetIndex: true });
         checkAutoTheater();
+        if (prefs.ambientGlowEnabled && !ambientGlowActive) {
+            toggleAmbientGlow();
+        }
     }
 
-    if (document.documentElement) {
-        startAfterDOMReady();
-    } else {
+    if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', startAfterDOMReady, { once: true });
+    } else {
+        startAfterDOMReady();
     }
 })();
