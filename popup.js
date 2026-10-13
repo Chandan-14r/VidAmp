@@ -128,8 +128,9 @@ async function initSiteSection() {
 
         const speedText = speed !== undefined ? `Speed: ${speed}×` : 'Speed: 1×';
         const seekText = seek !== undefined ? `Seek: ±${seek}s` : 'Seek: 10s';
+        const soundStep = vol > 0 ? Math.max(0, Math.min(20, Math.round(Math.sqrt(Math.min(1.0, vol)) * 20))) : 0;
         const volText = vol !== undefined
-            ? (vol > 1.0 ? `Boost: ${Math.round(vol * 100)}%` : `Sound: ${Math.round(vol * 20)}/20`)
+            ? (vol > 1.0 ? `Boost: ${Math.round(vol * 100)}%` : `Sound: ${soundStep}/20`)
             : 'Sound: 20/20';
 
         siteInfoEl.textContent = `${speedText}  ·  ${seekText}  ·  ${volText}`;

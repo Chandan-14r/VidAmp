@@ -18,9 +18,9 @@ export const AUDIO_PRESETS: Record<string, AudioPreset> = {
     bassGain: 0,
     vocalGain: 0,
     trebleGain: 0,
-    compThreshold: -8,
-    compRatio: 12,
-    compKnee: 10,
+    compThreshold: 0,
+    compRatio: 1,
+    compKnee: 0,
   },
   vocal: {
     id: 'vocal',

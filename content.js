@@ -550,9 +550,9 @@
             bassGain: 0,
             vocalGain: 0,
             trebleGain: 0,
-            compThreshold: -8,
-            compRatio: 12,
-            compKnee: 10
+            compThreshold: 0,
+            compRatio: 1,
+            compKnee: 0
         },
         vocal: {
             id: 'vocal',
@@ -707,9 +707,9 @@
             let compressor = null;
             if (typeof ctx.createDynamicsCompressor === 'function') {
                 compressor = ctx.createDynamicsCompressor();
-                compressor.threshold.value = -8;
-                compressor.knee.value = 12;
-                compressor.ratio.value = 12;
+                compressor.threshold.value = 0;
+                compressor.knee.value = 0;
+                compressor.ratio.value = 1;
                 compressor.attack.value = 0.003;
                 compressor.release.value = 0.25;
             }
@@ -752,9 +752,20 @@
     function applyPresetToNodeEntry(entry, preset) {
         if (!entry || !preset) return;
         const now = entry.ctx.currentTime || 0;
-        const compThresh = preset.compThreshold !== undefined ? preset.compThreshold : -8;
-        const compRat = preset.compRatio !== undefined ? preset.compRatio : 12;
-        const compKn = preset.compKnee !== undefined ? preset.compKnee : 10;
+        let compThresh = 0;
+        let compRat = 1;
+        let compKn = 0;
+
+        if (prefs.volume > 1.0) {
+            compThresh = -1.5;
+            compRat = 20;
+            compKn = 6;
+        } else if (preset.id !== 'normal') {
+            compThresh = preset.compThreshold !== undefined ? preset.compThreshold : 0;
+            compRat = preset.compRatio !== undefined ? preset.compRatio : 1;
+            compKn = preset.compKnee !== undefined ? preset.compKnee : 0;
+        }
+
         try {
             if (entry.bassFilter) entry.bassFilter.gain.setTargetAtTime(preset.bassGain || 0, now, 0.02);
             if (entry.vocalFilter) entry.vocalFilter.gain.setTargetAtTime(preset.vocalGain || 0, now, 0.02);
@@ -790,21 +801,29 @@
 
         if (entry.compressor) {
             const currentPresetObj = AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal;
-            let targetThreshold = currentPresetObj.compThreshold !== undefined ? currentPresetObj.compThreshold : -8;
-            let targetRatio = currentPresetObj.compRatio !== undefined ? currentPresetObj.compRatio : 12;
+            let targetThreshold = 0;
+            let targetRatio = 1;
+            let targetKnee = 0;
 
             if (vol > 1.0) {
                 // True brickwall peak limiter ceiling: prevents clipping while preserving maximum perceived loudness
                 targetThreshold = -1.5;
                 targetRatio = 20;
+                targetKnee = 6;
+            } else if (currentAudioPreset !== 'normal') {
+                targetThreshold = currentPresetObj.compThreshold !== undefined ? currentPresetObj.compThreshold : 0;
+                targetRatio = currentPresetObj.compRatio !== undefined ? currentPresetObj.compRatio : 1;
+                targetKnee = currentPresetObj.compKnee !== undefined ? currentPresetObj.compKnee : 0;
             }
 
             try {
                 entry.compressor.threshold.setTargetAtTime(targetThreshold, now, 0.02);
                 entry.compressor.ratio.setTargetAtTime(targetRatio, now, 0.02);
+                entry.compressor.knee.setTargetAtTime(targetKnee, now, 0.02);
             } catch (_) {
                 entry.compressor.threshold.value = targetThreshold;
                 entry.compressor.ratio.value = targetRatio;
+                entry.compressor.knee.value = targetKnee;
             }
         }
     }
@@ -820,12 +839,15 @@
 
     function volumeToSoundStep(vol) {
         if (!vol || vol <= 0) return 0;
-        return Math.max(0, Math.min(MAX_SOUND_STEP, Math.round(vol * MAX_SOUND_STEP)));
+        if (vol >= 1.0) return MAX_SOUND_STEP;
+        return Math.max(0, Math.min(MAX_SOUND_STEP, Math.round(Math.sqrt(vol) * MAX_SOUND_STEP)));
     }
 
     function soundStepToVolume(step) {
         if (step <= 0) return 0;
-        return Math.max(0, Math.min(MAX_SOUND_STEP, Math.round(step))) / MAX_SOUND_STEP;
+        const clampedStep = Math.max(0, Math.min(MAX_SOUND_STEP, Math.round(step)));
+        const normalized = clampedStep / MAX_SOUND_STEP;
+        return Math.round(normalized * normalized * 10000) / 10000;
     }
 
     function formatSoundLabel(vol, isMuted = false) {
@@ -966,17 +988,17 @@
                 v.removeAttribute('muted');
             } catch (_) {}
 
-            // 2. Determine target volume (at least sound step 1 = 0.05)
+            // 2. Determine target volume (at least sound step 1)
             if (vol === null || vol === undefined) {
-                if (prefs.volume && prefs.volume > 0.05) {
+                if (prefs.volume && prefs.volume > 0.001) {
                     vol = prefs.volume;
-                } else if (v.volume && v.volume > 0.05) {
+                } else if (v.volume && v.volume > 0.001) {
                     vol = v.volume;
                 } else {
-                    vol = soundStepToVolume(1); // Starts steadily from 1 (1/20 = 5%)
+                    vol = soundStepToVolume(1); // Starts steadily from 1
                 }
             }
-            vol = Math.max(0.05, Math.min(MAX_BOOST, vol));
+            vol = Math.max(soundStepToVolume(1), Math.min(MAX_BOOST, vol));
 
             prefs.muted = false;
             prefs.volume = vol;
@@ -7835,7 +7857,7 @@
                     }
                 } else if (key === siteKey('volume') && video) {
                     const newVol = Number(change.newValue);
-                    if (!isInternalVolumeChange && Number.isFinite(newVol) && Math.abs(prefs.volume - newVol) > 0.01) {
+                    if (!isInternalVolumeChange && Number.isFinite(newVol) && Math.abs(prefs.volume - newVol) > 0.001) {
                         applyVolumeAndBoost(video, newVol, false, false);
                     }
                 } else if (key === siteKey('brightness') && video) {
