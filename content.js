@@ -683,6 +683,13 @@
 
             const source = ctx.createMediaElementSource(v);
 
+            // BiquadFilter: Adaptive Subsonic High-Pass Filter (protects small laptop speaker cones from excursion damage)
+            const subsonicFilter = ctx.createBiquadFilter();
+            subsonicFilter.type = 'highpass';
+            const initialCutoff = prefs.volume <= 1.0 ? 20 : Math.min(80, Math.round(20 + ((prefs.volume - 1.0) / 9.0) * 60));
+            subsonicFilter.frequency.value = initialCutoff;
+            subsonicFilter.Q.value = 0.707;
+
             // BiquadFilter: Low-shelf for Bass Boost (120Hz)
             const bassFilter = ctx.createBiquadFilter();
             bassFilter.type = 'lowshelf';
@@ -699,7 +706,7 @@
             trebleFilter.type = 'highshelf';
             trebleFilter.frequency.value = 7500;
 
-            // Gain node for clean boost (1.0 to 6.0)
+            // Gain node for clean boost (1.0 to 10.0)
             const gain = ctx.createGain();
             gain.gain.value = prefs.volume > 1.0 ? prefs.volume : 1.0;
 
@@ -710,8 +717,8 @@
                 compressor.threshold.value = 0;
                 compressor.knee.value = 0;
                 compressor.ratio.value = 1;
-                compressor.attack.value = 0.003;
-                compressor.release.value = 0.25;
+                compressor.attack.value = 0.002;
+                compressor.release.value = 0.20;
             }
 
             // Intermediate stereo/mono downmix node (sums L+R cleanly into both headphones)
@@ -720,8 +727,9 @@
             monoNode.channelCountMode = 'explicit';
             monoNode.channelInterpretation = 'speakers';
 
-            // Routing Chain: source -> bassFilter -> vocalFilter -> trebleFilter -> gain -> (compressor) -> monoNode -> destination
-            source.connect(bassFilter);
+            // Routing Chain: source -> subsonicFilter -> bassFilter -> vocalFilter -> trebleFilter -> gain -> (compressor) -> monoNode -> destination
+            source.connect(subsonicFilter);
+            subsonicFilter.connect(bassFilter);
             bassFilter.connect(vocalFilter);
             vocalFilter.connect(trebleFilter);
             trebleFilter.connect(gain);
@@ -733,7 +741,7 @@
             }
             monoNode.connect(ctx.destination);
 
-            entry = { ctx, source, gain, bassFilter, vocalFilter, trebleFilter, compressor, monoNode };
+            entry = { ctx, source, subsonicFilter, gain, bassFilter, vocalFilter, trebleFilter, compressor, monoNode };
             audioNodes.set(v, entry);
 
             // Apply active preset parameters
@@ -757,9 +765,9 @@
         let compKn = 0;
 
         if (prefs.volume > 1.0) {
-            compThresh = -1.5;
+            compThresh = prefs.volume >= 6.0 ? -2.0 : -1.5;
             compRat = 20;
-            compKn = 6;
+            compKn = 8;
         } else if (preset.id !== 'normal') {
             compThresh = preset.compThreshold !== undefined ? preset.compThreshold : 0;
             compRat = preset.compRatio !== undefined ? preset.compRatio : 1;
@@ -799,6 +807,17 @@
             entry.gain.gain.value = effectiveGain;
         }
 
+        // Adaptive Subsonic Protection: dynamically rolls off excursion-heavy sub-bass (<80Hz) at high gain
+        // to protect small laptop speaker cones from bottoming out and voice coil overheating.
+        if (entry.subsonicFilter) {
+            const cutoff = vol <= 1.0 ? 20 : Math.min(80, Math.round(20 + ((vol - 1.0) / 9.0) * 60));
+            try {
+                entry.subsonicFilter.frequency.setTargetAtTime(cutoff, now, 0.03);
+            } catch (_) {
+                entry.subsonicFilter.frequency.value = cutoff;
+            }
+        }
+
         if (entry.compressor) {
             const currentPresetObj = AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal;
             let targetThreshold = 0;
@@ -807,9 +826,9 @@
 
             if (vol > 1.0) {
                 // True brickwall peak limiter ceiling: prevents clipping while preserving maximum perceived loudness
-                targetThreshold = -1.5;
+                targetThreshold = vol >= 6.0 ? -2.0 : -1.5;
                 targetRatio = 20;
-                targetKnee = 6;
+                targetKnee = 8;
             } else if (currentAudioPreset !== 'normal') {
                 targetThreshold = currentPresetObj.compThreshold !== undefined ? currentPresetObj.compThreshold : 0;
                 targetRatio = currentPresetObj.compRatio !== undefined ? currentPresetObj.compRatio : 1;
