@@ -14,11 +14,11 @@ export const BRICKWALL_LIMITER_CONFIG: LimiterConfig = {
   release: 0.25, // 250ms smooth release
 };
 
-export const MAX_BOOST_GAIN = 6.0;
+export const MAX_BOOST_GAIN = 10.0; // 1000% maximum boost
 export const MIN_BOOST_GAIN = 1.0;
 
 /**
- * Validates and clamps audio boost gain multiplier within [1.0, 6.0].
+ * Validates and clamps audio boost gain multiplier within [1.0, 10.0].
  */
 export function clampBoostGain(gain: number): number {
   if (!Number.isFinite(gain) || isNaN(gain)) return MIN_BOOST_GAIN;

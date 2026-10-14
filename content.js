@@ -833,35 +833,35 @@
        ========================================================= */
 
     const MAX_SOUND_STEP = 20;
-    const MAX_BOOST = 6.0; // Up to 600% super volume boost
-    const BOOST_LADDER = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.25, 2.5, 2.75, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0];
-    let savedNormalVolume = 1.0;
+    const MAX_NORMAL_VOLUME = 6.0; // 600% at step 20 (normal max voice)
+    const MAX_BOOST = 10.0; // Up to 1000% turbo volume boost
+    const TURBO_BOOST_LADDER = [7.0, 8.0, 9.0, 10.0];
+    let savedNormalVolume = 6.0;
 
     function volumeToSoundStep(vol) {
         if (!vol || vol <= 0) return 0;
-        if (vol >= 1.0) return MAX_SOUND_STEP;
-        return Math.max(0, Math.min(MAX_SOUND_STEP, Math.round(Math.sqrt(vol) * MAX_SOUND_STEP)));
+        if (vol >= MAX_NORMAL_VOLUME) return MAX_SOUND_STEP;
+        const fraction = Math.sqrt(vol / MAX_NORMAL_VOLUME);
+        return Math.max(0, Math.min(MAX_SOUND_STEP, Math.round(fraction * MAX_SOUND_STEP)));
     }
 
     function soundStepToVolume(step) {
         if (step <= 0) return 0;
         const clampedStep = Math.max(0, Math.min(MAX_SOUND_STEP, Math.round(step)));
         const normalized = clampedStep / MAX_SOUND_STEP;
-        return Math.round(normalized * normalized * 10000) / 10000;
+        return Math.round(MAX_NORMAL_VOLUME * normalized * normalized * 10000) / 10000;
     }
 
     function formatSoundLabel(vol, isMuted = false) {
         if (isMuted || vol <= 0) {
             return '🔇 Sound: 0/20';
         }
-        if (vol > 1.0) {
+        if (vol > MAX_NORMAL_VOLUME) {
             const pct = Math.round(vol * 100);
-            if (pct >= 500) {
+            if (pct >= 1000) {
                 return `⚡ Ultra Boost: ${pct}% (MAX)`;
-            } else if (pct >= 250) {
-                return `🔥 Super Boost: ${pct}%`;
             }
-            return `🚀 Loud Boost: ${pct}%`;
+            return `⚡ Turbo Boost: ${pct}%`;
         }
         const step = volumeToSoundStep(vol);
         return `🔊 Sound: ${step}/20`;
@@ -872,23 +872,26 @@
         if (!v) return;
 
         if (isVideoMuted(v)) {
-            unmuteVideo(v, 2.0);
-            showToast('🚀 Loud Boost: 200%');
+            unmuteVideo(v, 7.0);
+            showToast('⚡ Turbo Boost: 700%');
             return;
         }
 
-        // Turbo cycle: Normal -> 200% -> 300% -> 600% -> Normal
-        if (prefs.volume < 1.95) {
-            if (prefs.volume > 0 && prefs.volume <= 1.0) savedNormalVolume = prefs.volume;
-            applyVolumeAndBoost(v, 2.0, true);
-        } else if (prefs.volume < 2.95) {
-            applyVolumeAndBoost(v, 3.0, true);
-        } else if (prefs.volume < 5.95) {
-            applyVolumeAndBoost(v, 6.0, true);
+        // Turbo cycle: Normal (<= 6.0) -> 700% -> 800% -> 900% -> 1000% -> Normal
+        if (prefs.volume < 6.95) {
+            if (prefs.volume > 0 && prefs.volume <= MAX_NORMAL_VOLUME) savedNormalVolume = prefs.volume;
+            applyVolumeAndBoost(v, 7.0, true);
+        } else if (prefs.volume < 7.95) {
+            applyVolumeAndBoost(v, 8.0, true);
+        } else if (prefs.volume < 8.95) {
+            applyVolumeAndBoost(v, 9.0, true);
+        } else if (prefs.volume < 9.95) {
+            applyVolumeAndBoost(v, 10.0, true);
         } else {
             // Restore previous normal sound level
-            prefs.loudBoostActive = false;
-            const restoreVol = Math.max(0.05, Math.min(1.0, savedNormalVolume || 1.0));
+            const restoreVol = (savedNormalVolume && savedNormalVolume > 0 && savedNormalVolume <= MAX_NORMAL_VOLUME)
+                ? savedNormalVolume
+                : MAX_NORMAL_VOLUME;
             applyVolumeAndBoost(v, restoreVol, true);
         }
     }
@@ -905,7 +908,7 @@
             return;
         }
 
-        if (prefs.volume < 1.0) {
+        if (prefs.volume < MAX_NORMAL_VOLUME) {
             const curStep = volumeToSoundStep(prefs.volume);
             if (curStep < MAX_SOUND_STEP) {
                 const nextStep = curStep + 1;
@@ -915,8 +918,8 @@
             }
         }
 
-        // Stepping up at or above 1.0 (20/20) continues seamlessly into boost ladder up to 600%
-        const nextVol = BOOST_LADDER.find(lvl => lvl > prefs.volume + 0.005) || MAX_BOOST;
+        // Stepping up above 600% (20/20) continues into Turbo Boost ladder (700%, 800%, 900%, 1000%)
+        const nextVol = TURBO_BOOST_LADDER.find(lvl => lvl > prefs.volume + 0.05) || MAX_BOOST;
         applyVolumeAndBoost(v, nextVol, true);
     }
 
@@ -924,11 +927,10 @@
         if (!v) v = getVideo() || document.querySelector('video');
         if (!v) return;
 
-        if (prefs.volume > 1.0) {
-            const prevVol = [...BOOST_LADDER].reverse().find(lvl => lvl < prefs.volume - 0.005) || 1.0;
-            if (prevVol <= 1.0) {
-                prefs.loudBoostActive = false;
-                applyVolumeAndBoost(v, 1.0, true);
+        if (prefs.volume > MAX_NORMAL_VOLUME) {
+            const prevVol = [...TURBO_BOOST_LADDER].reverse().find(lvl => lvl < prefs.volume - 0.05) || MAX_NORMAL_VOLUME;
+            if (prevVol <= MAX_NORMAL_VOLUME) {
+                applyVolumeAndBoost(v, MAX_NORMAL_VOLUME, true);
             } else {
                 applyVolumeAndBoost(v, prevVol, true);
             }
@@ -975,97 +977,19 @@
 
     function unmuteVideo(v, targetVolume = null) {
         if (!v) v = getVideo() || document.querySelector('video');
-        if (!v) return;
+        if (!v) return 0;
 
-        isInternalVolumeChange = true;
         let vol = targetVolume;
-
-        try {
-            // 1. Unmute native HTML5 media element
-            try {
-                v.muted = false;
-                v.defaultMuted = false;
-                v.removeAttribute('muted');
-            } catch (_) {}
-
-            // 2. Determine target volume (at least sound step 1)
-            if (vol === null || vol === undefined) {
-                if (prefs.volume && prefs.volume > 0.001) {
-                    vol = prefs.volume;
-                } else if (v.volume && v.volume > 0.001) {
-                    vol = v.volume;
-                } else {
-                    vol = soundStepToVolume(1); // Starts steadily from 1
-                }
-            }
-            vol = Math.max(soundStepToVolume(1), Math.min(MAX_BOOST, vol));
-
-            prefs.muted = false;
-            prefs.volume = vol;
-            saveValue(siteKey('muted'), false);
-            saveValue(siteKey('volume'), vol);
-
-            // Apply volume to element & Web Audio
-            if (vol <= 1.0) {
-                prefs.loudBoostActive = false;
-                try { v.volume = vol; } catch (_) {}
-                const entry = audioNodes.get(v);
-                if (entry) {
-                    updateGainAndLimiter(entry, 1.0);
-                }
+        if (vol === null || vol === undefined) {
+            if (prefs.volume && prefs.volume > 0.001) {
+                vol = prefs.volume;
+            } else if (v.volume && v.volume > 0.001) {
+                vol = v.volume;
             } else {
-                prefs.loudBoostActive = true;
-                try { v.volume = 1.0; } catch (_) {}
-                const entry = getOrCreateAudioBoostNode(v);
-                if (entry) {
-                    updateGainAndLimiter(entry, vol);
-                }
+                vol = soundStepToVolume(1);
             }
-
-            // 3. YouTube player specialized unmute & volume sync
-            if (isYouTubePage()) {
-                try {
-                    const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                    let unMutedViaApi = false;
-                    if (mp && typeof mp.unMute === 'function') {
-                        mp.unMute();
-                        unMutedViaApi = true;
-                        if (typeof mp.setVolume === 'function') {
-                            mp.setVolume(Math.round(Math.min(1.0, vol) * 100));
-                        }
-                    }
-                    if (!unMutedViaApi) {
-                        const ytpMuteBtn = document.querySelector('.ytp-mute-button');
-                        if (ytpMuteBtn) {
-                            const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
-                            if (label.includes('unmute')) {
-                                ytpMuteBtn.click();
-                            }
-                        }
-                    }
-                } catch (_) {}
-            }
-
-            // 4. Dispatch HTML5 volumechange event so custom player UIs (ArtPlayer, Video.js, Plyr, etc.) sync
-            try {
-                v.dispatchEvent(new Event('volumechange', { bubbles: true }));
-            } catch (_) {}
-
-            // 5. Resume Web AudioContext if suspended
-            try {
-                const entry = audioNodes.get(v);
-                if (entry && entry.ctx && entry.ctx.state === 'suspended') {
-                    entry.ctx.resume().catch(() => {});
-                }
-            } catch (_) {}
-
-            // 6. Sync UI controls and toolbar
-            syncControlsToVideo();
-            if (toolbarBuilt) syncToolbar();
-        } finally {
-            setTimeout(() => { isInternalVolumeChange = false; }, 120);
         }
-
+        applyVolumeAndBoost(v, vol, true);
         return vol;
     }
 
@@ -1073,48 +997,12 @@
         if (!v) v = getVideo() || document.querySelector('video');
         if (!v) return;
 
-        isInternalVolumeChange = true;
-        try {
-            if (isVideoMuted(v)) {
-                const curStep = volumeToSoundStep(prefs.volume);
-                const step = curStep > 0 ? curStep : 1;
-                const vol = unmuteVideo(v, soundStepToVolume(step));
-                showToast(`🔊 Sound: ${step}/20`);
-            } else {
-                v.muted = true;
-                prefs.muted = true;
-                saveValue(siteKey('muted'), true);
-
-                if (isYouTubePage()) {
-                    try {
-                        const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                        let mutedViaApi = false;
-                        if (mp && typeof mp.mute === 'function') {
-                            mp.mute();
-                            mutedViaApi = true;
-                        }
-                        if (!mutedViaApi) {
-                            const ytpMuteBtn = document.querySelector('.ytp-mute-button');
-                            if (ytpMuteBtn) {
-                                const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
-                                if (!label.includes('unmute')) {
-                                    ytpMuteBtn.click();
-                                }
-                            }
-                        }
-                    } catch (_) {}
-                }
-
-                try {
-                    v.dispatchEvent(new Event('volumechange', { bubbles: true }));
-                } catch (_) {}
-
-                syncControlsToVideo();
-                if (toolbarBuilt) syncToolbar();
-                showToast('🔇 Sound: 0/20');
-            }
-        } finally {
-            setTimeout(() => { isInternalVolumeChange = false; }, 120);
+        if (isVideoMuted(v)) {
+            const curStep = volumeToSoundStep(prefs.volume);
+            const step = curStep > 0 ? curStep : 1;
+            unmuteVideo(v, soundStepToVolume(step));
+        } else {
+            applyVolumeAndBoost(v, 0, true);
         }
     }
 
@@ -1129,51 +1017,125 @@
 
         isInternalVolumeChange = true;
         try {
-            if (effectiveVol <= 1.0) {
-                // Normal volume (0–20 scale)
+            if (effectiveVol <= 0) {
                 prefs.loudBoostActive = false;
-                try { v.volume = effectiveVol; } catch (_) {}
+                try {
+                    v.muted = true;
+                    v.volume = 0;
+                } catch (_) {}
+                prefs.muted = true;
+                saveValue(siteKey('muted'), true);
+
                 const entry = audioNodes.get(v);
                 if (entry) {
                     updateGainAndLimiter(entry, 1.0);
                 }
+
+                if (isYouTubePage()) {
+                    try {
+                        const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                        if (mp && typeof mp.mute === 'function') {
+                            mp.mute();
+                        }
+                        if (!mp || (typeof mp.isMuted === 'function' && !mp.isMuted())) {
+                            const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                            if (ytpMuteBtn) {
+                                const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                                if (!label.includes('unmute')) {
+                                    ytpMuteBtn.click();
+                                }
+                            }
+                        }
+                    } catch (_) {}
+                }
+
+                if (notify) {
+                    showToast('🔇 Sound: 0/20');
+                }
+            } else if (effectiveVol <= 1.0) {
+                prefs.loudBoostActive = false;
+                try {
+                    v.muted = false;
+                    v.removeAttribute('muted');
+                    v.volume = effectiveVol;
+                } catch (_) {}
+                prefs.muted = false;
+                saveValue(siteKey('muted'), false);
+
+                const entry = audioNodes.get(v);
+                if (entry) {
+                    updateGainAndLimiter(entry, 1.0);
+                }
+
+                if (isYouTubePage()) {
+                    try {
+                        const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                        if (mp) {
+                            if (typeof mp.unMute === 'function') mp.unMute();
+                            if (typeof mp.setVolume === 'function') {
+                                mp.setVolume(Math.round(effectiveVol * 100));
+                            }
+                        }
+                        if (!mp || (typeof mp.isMuted === 'function' && mp.isMuted())) {
+                            const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                            if (ytpMuteBtn) {
+                                const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                                if (label.includes('unmute')) {
+                                    ytpMuteBtn.click();
+                                }
+                            }
+                        }
+                    } catch (_) {}
+                }
+
                 if (notify) {
                     showToast(formatSoundLabel(effectiveVol, false));
                 }
             } else {
-                // Loud Boost active (> 100% up to 600%)
                 prefs.loudBoostActive = true;
-                try { v.volume = 1.0; } catch (_) {}
+                try {
+                    v.muted = false;
+                    v.removeAttribute('muted');
+                    v.volume = 1.0;
+                } catch (_) {}
+                prefs.muted = false;
+                saveValue(siteKey('muted'), false);
+
                 const entry = getOrCreateAudioBoostNode(v);
                 if (entry) {
                     updateGainAndLimiter(entry, effectiveVol);
-                    if (notify) {
-                        showToast(formatSoundLabel(effectiveVol, false));
+                    if (entry.ctx && entry.ctx.state === 'suspended') {
+                        entry.ctx.resume().catch(() => {});
                     }
-                } else {
-                    // If Web Audio blocked, stay at 100%
-                    try { v.volume = 1.0; } catch (_) {}
-                    if (notify) {
-                        showToast('🔊 Sound: 20/20');
-                    }
+                }
+
+                if (isYouTubePage()) {
+                    try {
+                        const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                        if (mp) {
+                            if (typeof mp.unMute === 'function') mp.unMute();
+                            if (typeof mp.setVolume === 'function') mp.setVolume(100);
+                        }
+                        if (!mp || (typeof mp.isMuted === 'function' && mp.isMuted())) {
+                            const ytpMuteBtn = document.querySelector('.ytp-mute-button');
+                            if (ytpMuteBtn) {
+                                const label = (ytpMuteBtn.getAttribute('aria-label') || ytpMuteBtn.getAttribute('title') || ytpMuteBtn.dataset?.titleNoTooltip || '').toLowerCase();
+                                if (label.includes('unmute')) {
+                                    ytpMuteBtn.click();
+                                }
+                            }
+                        }
+                    } catch (_) {}
+                }
+
+                if (notify) {
+                    showToast(formatSoundLabel(effectiveVol, false));
                 }
             }
 
-            // Sync YouTube player volume
-            if (isYouTubePage()) {
-                try {
-                    const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-                    if (mp && typeof mp.setVolume === 'function') {
-                        mp.setVolume(Math.round(Math.min(1.0, effectiveVol) * 100));
-                    }
-                } catch (_) {}
-            }
-
-            // Only unmute if user EXPLICITLY triggered a volume action (notify === true)
-            // NEVER auto-unmute on background startup sync to avoid triggering Chrome autoplay blocking/buffering!
-            if (notify && effectiveVol > 0 && (v.muted || prefs.muted || isVideoMuted(v))) {
-                unmuteVideo(v, effectiveVol);
-            }
+            try {
+                v.dispatchEvent(new Event('volumechange', { bubbles: true }));
+            } catch (_) {}
         } finally {
             setTimeout(() => { isInternalVolumeChange = false; }, 80);
         }
@@ -3235,14 +3197,14 @@
                         <span id="volume-val" style="font-size:12px; font-weight:700; color:#e0e0e0; min-width:48px; text-align:right;">20/20</span>
                     </div>
                     <div class="grid-3">
-                        <button id="panel-loudboost" class="hud-btn" type="button" title="Turbo Loud Boost (B: 200% / 300% / 600%)">🚀 Boost (B)</button>
+                        <button id="panel-loudboost" class="hud-btn" type="button" title="Turbo Loud Boost (B: 700% / 800% / 900% / 1000%)">⚡ Turbo (B)</button>
                         <button id="panel-preset" class="hud-btn" type="button" title="Audio Equalizer Preset (V)">🎵 Preset (V)</button>
                         <button id="panel-mono" class="hud-btn" type="button" title="Mono Audio Toggle (Shift + M)">🎧 Mono</button>
                     </div>
                     <div class="grid-3" style="margin-top: 4px;">
-                        <button id="panel-boost-200" class="hud-btn hud-pill" type="button" title="Set Loud Boost to 200%" style="font-size:11px; padding:4px 2px;">⚡ 200%</button>
-                        <button id="panel-boost-300" class="hud-btn hud-pill" type="button" title="Set Super Boost to 300%" style="font-size:11px; padding:4px 2px;">🔥 300%</button>
-                        <button id="panel-boost-600" class="hud-btn hud-pill" type="button" title="Set Ultra Boost to 600% (MAX)" style="font-size:11px; padding:4px 2px;">⚡ 600%</button>
+                        <button id="panel-boost-200" class="hud-btn hud-pill" type="button" title="Set Turbo Boost to 700%" style="font-size:11px; padding:4px 2px;">⚡ 700%</button>
+                        <button id="panel-boost-300" class="hud-btn hud-pill" type="button" title="Set Turbo Boost to 850%" style="font-size:11px; padding:4px 2px;">🔥 850%</button>
+                        <button id="panel-boost-600" class="hud-btn hud-pill" type="button" title="Set Ultra Boost to 1000% (MAX)" style="font-size:11px; padding:4px 2px;">⚡ 1000%</button>
                     </div>
                     <div class="grid-2" style="margin-top: 4px;">
                         <button id="pip" class="hud-btn" type="button" title="Picture-in-Picture (P)">🖼️ PiP</button>
@@ -3672,20 +3634,20 @@
         volumeSlider.ondblclick = function () {
             const v = getVideo();
             if (!v) return;
-            applyVolumeAndBoost(v, 1.0, true);
-            showToast('🔊 Volume reset to 20/20 (100%)');
+            applyVolumeAndBoost(v, MAX_NORMAL_VOLUME, true);
+            showToast('🔊 Volume set to 20/20 (600%)');
             syncControlsToVideo();
         };
 
         const volValEl = $('#volume-val');
         if (volValEl) {
             volValEl.style.cursor = 'pointer';
-            volValEl.title = 'Double-click to reset volume to 20/20 (100%)';
+            volValEl.title = 'Double-click to set volume to 20/20 (600%)';
             volValEl.ondblclick = function () {
                 const v = getVideo();
                 if (!v) return;
-                applyVolumeAndBoost(v, 1.0, true);
-                showToast('🔊 Volume reset to 20/20 (100%)');
+                applyVolumeAndBoost(v, MAX_NORMAL_VOLUME, true);
+                showToast('🔊 Volume set to 20/20 (600%)');
                 syncControlsToVideo();
             };
         }
@@ -3765,17 +3727,17 @@
         }
         if (panelBoost200) {
             panelBoost200.onclick = () => {
-                applyVolumeAndBoost(getVideo(), 2.0, true);
+                applyVolumeAndBoost(getVideo(), 7.0, true);
             };
         }
         if (panelBoost300) {
             panelBoost300.onclick = () => {
-                applyVolumeAndBoost(getVideo(), 3.0, true);
+                applyVolumeAndBoost(getVideo(), 8.5, true);
             };
         }
         if (panelBoost600) {
             panelBoost600.onclick = () => {
-                applyVolumeAndBoost(getVideo(), 6.0, true);
+                applyVolumeAndBoost(getVideo(), 10.0, true);
             };
         }
         if (panelBassBtn) {
@@ -4357,7 +4319,7 @@
 
         // Buttons
         const btnLoop       = btn('loop', 'loop', 'Loop whole video (Shift+L)');
-        const btnVolBoost   = btn('volboost', 'volumeBoost', 'Turbo Loud Boost up to 600% (B / Right-Click: Mute)');
+        const btnVolBoost   = btn('volboost', 'volumeBoost', 'Turbo Boost up to 1000% (B / Right-Click: Mute)');
         const btnBass       = btn('bass', 'bass', 'Studio Audio Presets (Click/V: Cycle Presets, Right-Click / Shift+M: Mono)');
         const btnCinema     = btn('cinema', 'cinema', 'Cinema Mode - Dim page lights (Shift+C)');
         const btnAmbient    = btn('ambient', 'ambient', 'Universal Ambient Glow - Bias Lighting (Shift+A)');
@@ -4648,13 +4610,13 @@
 
         const volB = tbShadow.querySelector('#tb-volboost');
         if (volB) {
-            const isBoosted = prefs.volume > 1.0 || Boolean(prefs.loudBoostActive);
+            const isBoosted = prefs.volume > MAX_NORMAL_VOLUME || Boolean(prefs.loudBoostActive && prefs.volume > MAX_NORMAL_VOLUME);
             volB.classList.toggle('active', isBoosted);
             if (isBoosted) {
                 const pct = Math.round(prefs.volume * 100);
                 volB.title = `Turbo Boost: ${pct}% (Click or B to cycle, R-Click to mute)`;
             } else {
-                volB.title = 'Turbo Loud Boost (B: 200% / 300% / 600%)';
+                volB.title = 'Turbo Boost (B: 700% / 800% / 900% / 1000%)';
             }
         }
 
@@ -5655,34 +5617,34 @@
         volumeSlider.value = String(curSoundStep);
         const volValEl = shadow.querySelector('#volume-val');
         if (volValEl) {
-            if (prefs.volume > 1.0) {
+            if (prefs.volume > MAX_NORMAL_VOLUME) {
                 const pct = Math.round(prefs.volume * 100);
-                volValEl.textContent = (pct >= 500 ? '⚡ ' : (pct >= 250 ? '🔥 ' : '🚀 ')) + pct + '%';
+                volValEl.textContent = (pct >= 900 ? '⚡ ' : (pct >= 800 ? '🔥 ' : '🚀 ')) + pct + '%';
             } else if (video.muted || prefs.muted || prefs.volume <= 0) {
                 volValEl.textContent = '0/20';
             } else {
                 volValEl.textContent = curSoundStep + '/20';
             }
         }
-        muteBtn.textContent = video.muted || prefs.muted || prefs.volume === 0 ? '🔇' : (prefs.volume > 1.0 ? '🚀' : '🔊');
+        muteBtn.textContent = video.muted || prefs.muted || prefs.volume === 0 ? '🔇' : (prefs.volume > MAX_NORMAL_VOLUME ? '⚡' : '🔊');
         const panelLoudB = shadow.querySelector('#panel-loudboost');
         if (panelLoudB) {
-            panelLoudB.classList.toggle('active', prefs.volume > 1.0 || Boolean(prefs.loudBoostActive));
-            if (prefs.volume > 1.0) {
-                panelLoudB.textContent = `🚀 ${Math.round(prefs.volume * 100)}%`;
+            panelLoudB.classList.toggle('active', prefs.volume > MAX_NORMAL_VOLUME || Boolean(prefs.loudBoostActive && prefs.volume > MAX_NORMAL_VOLUME));
+            if (prefs.volume > MAX_NORMAL_VOLUME) {
+                panelLoudB.textContent = `⚡ ${Math.round(prefs.volume * 100)}%`;
             } else {
-                panelLoudB.textContent = '🚀 Boost (B)';
+                panelLoudB.textContent = '⚡ Turbo (B)';
             }
         }
 
         const pill200 = shadow.querySelector('#panel-boost-200');
-        if (pill200) pill200.classList.toggle('active', Math.abs(prefs.volume - 2.0) < 0.05);
+        if (pill200) pill200.classList.toggle('active', Math.abs(prefs.volume - 7.0) < 0.05);
 
         const pill300 = shadow.querySelector('#panel-boost-300');
-        if (pill300) pill300.classList.toggle('active', Math.abs(prefs.volume - 3.0) < 0.05);
+        if (pill300) pill300.classList.toggle('active', Math.abs(prefs.volume - 8.5) < 0.05);
 
         const pill600 = shadow.querySelector('#panel-boost-600');
-        if (pill600) pill600.classList.toggle('active', Math.abs(prefs.volume - 6.0) < 0.05);
+        if (pill600) pill600.classList.toggle('active', Math.abs(prefs.volume - 10.0) < 0.05);
 
         const panelPresetBtn = shadow.querySelector('#panel-preset');
         if (panelPresetBtn) {
