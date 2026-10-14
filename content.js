@@ -721,13 +721,27 @@
                 compressor.release.value = 0.20;
             }
 
-            // Intermediate stereo/mono downmix node (sums L+R cleanly into both headphones)
+            // Intermediate stereo/mono downmix node (sums L+R cleanly into both headphones, and provides turbo makeup gain)
             const monoNode = ctx.createGain();
             monoNode.channelCount = monoAudioActive ? 1 : 2;
             monoNode.channelCountMode = 'explicit';
             monoNode.channelInterpretation = 'speakers';
 
-            // Routing Chain: source -> subsonicFilter -> bassFilter -> vocalFilter -> trebleFilter -> gain -> (compressor) -> monoNode -> destination
+            // Soft-Clipper / Anti-Clipping Saturator (warm analog sigmoid, prevents digital harsh clipping while delivering full punch)
+            let softClipper = null;
+            if (typeof ctx.createWaveShaper === 'function') {
+                softClipper = ctx.createWaveShaper();
+                const n_samples = 4096;
+                const curve = new Float32Array(n_samples);
+                for (let i = 0; i < n_samples; ++i) {
+                    const x = (i / (n_samples - 1)) * 2 - 1; // [-1.0, 1.0]
+                    curve[i] = Math.tanh(x * 1.2) / Math.tanh(1.2);
+                }
+                softClipper.curve = curve;
+                softClipper.oversample = '2x';
+            }
+
+            // Routing Chain: source -> subsonicFilter -> bassFilter -> vocalFilter -> trebleFilter -> gain -> (compressor) -> monoNode -> (softClipper) -> destination
             source.connect(subsonicFilter);
             subsonicFilter.connect(bassFilter);
             bassFilter.connect(vocalFilter);
@@ -739,9 +753,14 @@
             } else {
                 gain.connect(monoNode);
             }
-            monoNode.connect(ctx.destination);
+            if (softClipper) {
+                monoNode.connect(softClipper);
+                softClipper.connect(ctx.destination);
+            } else {
+                monoNode.connect(ctx.destination);
+            }
 
-            entry = { ctx, source, subsonicFilter, gain, bassFilter, vocalFilter, trebleFilter, compressor, monoNode };
+            entry = { ctx, source, subsonicFilter, gain, bassFilter, vocalFilter, trebleFilter, compressor, monoNode, softClipper };
             audioNodes.set(v, entry);
 
             // Apply active preset parameters
@@ -818,16 +837,52 @@
             }
         }
 
+        // Progressive Turbo Makeup Gain on post-stage monoNode:
+        // Ensures 700%, 800%, 900%, 1000% each provide an immediately audible, unmistakable increase in loudness
+        // instead of getting squashed into the same flat ceiling!
+        if (entry.monoNode) {
+            let makeupGain = 1.0;
+            if (vol > 6.0) {
+                if (vol < 7.5) makeupGain = 1.15;       // 700% (+1.2 dB)
+                else if (vol < 8.5) makeupGain = 1.32;  // 800% (+2.4 dB)
+                else if (vol < 9.5) makeupGain = 1.51;  // 900% (+3.6 dB)
+                else makeupGain = 1.78;                 // 1000% (+5.0 dB)
+            }
+            try {
+                entry.monoNode.gain.setTargetAtTime(makeupGain, now, 0.02);
+            } catch (_) {
+                entry.monoNode.gain.value = makeupGain;
+            }
+        }
+
         if (entry.compressor) {
             const currentPresetObj = AUDIO_PRESETS[currentAudioPreset] || AUDIO_PRESETS.normal;
             let targetThreshold = 0;
             let targetRatio = 1;
             let targetKnee = 0;
 
-            if (vol > 1.0) {
-                // True brickwall peak limiter ceiling: prevents clipping while preserving maximum perceived loudness
-                targetThreshold = vol >= 6.0 ? -2.0 : -1.5;
-                targetRatio = 20;
+            if (vol > 6.0) {
+                // Progressive turbo threshold ladder: lifts headroom at each step from -4.0 dB up to -1.5 dB
+                if (vol < 7.5) {
+                    targetThreshold = -4.0;
+                    targetRatio = 8;
+                    targetKnee = 10;
+                } else if (vol < 8.5) {
+                    targetThreshold = -3.2;
+                    targetRatio = 10;
+                    targetKnee = 10;
+                } else if (vol < 9.5) {
+                    targetThreshold = -2.4;
+                    targetRatio = 12;
+                    targetKnee = 10;
+                } else {
+                    targetThreshold = -1.5;
+                    targetRatio = 14;
+                    targetKnee = 10;
+                }
+            } else if (vol > 1.0) {
+                targetThreshold = -2.0;
+                targetRatio = 12;
                 targetKnee = 8;
             } else if (currentAudioPreset !== 'normal') {
                 targetThreshold = currentPresetObj.compThreshold !== undefined ? currentPresetObj.compThreshold : 0;

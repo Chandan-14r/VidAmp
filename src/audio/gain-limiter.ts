@@ -52,6 +52,9 @@ export function calculateSubsonicCutoff(gainMultiplier: number): number {
  * Applies dynamic limiter parameters based on gain boost level.
  */
 export function calculateLimiterThreshold(gainMultiplier: number, baseThreshold = -8): number {
+  if (gainMultiplier > 6.0) {
+    return calculateTurboThreshold(gainMultiplier);
+  }
   if (gainMultiplier >= 5.0) {
     return BRICKWALL_LIMITER_CONFIG.threshold; // -2.0 dBFS strict peak limit
   }
@@ -59,4 +62,32 @@ export function calculateLimiterThreshold(gainMultiplier: number, baseThreshold 
     return Math.min(baseThreshold, -4.0);
   }
   return baseThreshold;
+}
+
+/**
+ * Calculates progressive post-compression makeup gain multiplier.
+ * For normal volumes (<= 6.0), returns 1.0 (unity gain).
+ * For turbo boost (7.0 - 10.0), scales from 1.15x (+1.2 dB) to 1.78x (+5.0 dB)
+ * so that each turbo step (700%, 800%, 900%, 1000%) produces an immediately
+ * audible and distinct increase in perceived loudness.
+ */
+export function calculateTurboMakeupGain(gainMultiplier: number): number {
+  if (!Number.isFinite(gainMultiplier) || gainMultiplier <= 6.0) return 1.0;
+  if (gainMultiplier < 7.5) return 1.15; // 700% (+1.2 dB)
+  if (gainMultiplier < 8.5) return 1.32; // 800% (+2.4 dB)
+  if (gainMultiplier < 9.5) return 1.51; // 900% (+3.6 dB)
+  return 1.78;                          // 1000% (+5.0 dB)
+}
+
+/**
+ * Calculates progressive limiter threshold (dB) across turbo boost levels.
+ * Progressively lifts the ceiling from -4.0 dB to -1.5 dB so that higher turbo steps
+ * have more headroom and deliver noticeably higher acoustic power.
+ */
+export function calculateTurboThreshold(gainMultiplier: number): number {
+  if (gainMultiplier <= 6.0) return -2.0;
+  if (gainMultiplier < 7.5) return -4.0; // 700%
+  if (gainMultiplier < 8.5) return -3.2; // 800%
+  if (gainMultiplier < 9.5) return -2.4; // 900%
+  return -1.5;                          // 1000%
 }
