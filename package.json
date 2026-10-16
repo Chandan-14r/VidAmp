@@ -1,6 +1,6 @@
 {
   "name": "vidamp",
-  "version": "6.2.0",
+  "version": "6.2.1",
   "description": "VidAmp: Universal Video Enhancer & Speed Controller for Chrome, Edge, Brave, Firefox, Opera, and Arc.",
   "type": "module",
   "scripts": {
