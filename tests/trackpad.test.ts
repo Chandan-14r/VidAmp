@@ -26,14 +26,22 @@ describe('Trackpad Gesture Intent Classification', () => {
     expect(classifyWheelIntent(diagonalVertical)).toBe('page-scroll');
   });
 
-  it('detects two-finger horizontal speed swipe over video', () => {
-    // Pure horizontal swipe right
+  it('preserves two-finger horizontal swipe untouched for native back/forward page navigation', () => {
+    // Pure horizontal swipe right (standard forward navigation gesture)
     const horizontalRight = { ...baseInput, deltaX: 18, deltaY: 0 };
-    expect(classifyWheelIntent(horizontalRight)).toBe('speed-horizontal');
+    expect(classifyWheelIntent(horizontalRight)).toBe('page-scroll');
 
-    // Pure horizontal swipe left
+    // Pure horizontal swipe left (standard back navigation gesture)
     const horizontalLeft = { ...baseInput, deltaX: -22, deltaY: 2 };
-    expect(classifyWheelIntent(horizontalLeft)).toBe('speed-horizontal');
+    expect(classifyWheelIntent(horizontalLeft)).toBe('page-scroll');
+  });
+
+  it('guarantees gestures never trigger when nothing is playing or when in editable fields', () => {
+    const idleVideo = { ...baseInput, ctrlKey: true, isVideoPlaying: false };
+    expect(classifyWheelIntent(idleVideo)).toBe('page-scroll');
+
+    const searchField = { ...baseInput, ctrlKey: true, isEditable: true };
+    expect(classifyWheelIntent(searchField)).toBe('page-scroll');
   });
 
   it('detects pinch-to-zoom (ctrlKey) as speed pinch', () => {

@@ -8,14 +8,24 @@ export interface WheelGestureInput {
   altKey: boolean;
   isOverVideo: boolean;
   trackpadSpeedEnabled: boolean;
+  isVideoPlaying?: boolean;
+  isEditable?: boolean;
 }
 
 /**
- * Classifies a wheel/trackpad event to guarantee standard vertical scrolling
- * is NEVER intercepted or hijacked by speed controls.
+ * Classifies a wheel/trackpad event to guarantee:
+ * 1. Standard vertical scrolling is NEVER hijacked.
+ * 2. Two-finger horizontal swipe is NEVER hijacked, preserving the browser's native Back/Forward page navigation.
+ * 3. Gestures never trigger if nothing is playing or if typing in an input/search bar.
+ * 4. Two-finger pinch (ctrlKey) provides dedicated, conflict-free speed adjustment.
  */
 export function classifyWheelIntent(input: WheelGestureInput): GestureIntent {
-  if (!input.isOverVideo || !input.trackpadSpeedEnabled) {
+  if (
+    !input.isOverVideo ||
+    !input.trackpadSpeedEnabled ||
+    input.isEditable ||
+    input.isVideoPlaying === false
+  ) {
     return 'page-scroll';
   }
 
@@ -27,20 +37,13 @@ export function classifyWheelIntent(input: WheelGestureInput): GestureIntent {
     return 'zones-modifier';
   }
 
-  // Two-Finger Pinch (ctrlKey + trackpad scroll)
+  // Two-Finger Pinch (ctrlKey + trackpad scroll): Dedicated, conflict-free speed gesture!
   if (input.ctrlKey) {
     return 'speed-pinch';
   }
 
-  // Two-finger horizontal swipe over video
-  const absX = Math.abs(input.deltaX);
-  const absY = Math.abs(input.deltaY);
-
-  if (absX > absY + 4 && absX > 4) {
-    return 'speed-horizontal';
-  }
-
-  // Any vertical movement (deltaY >= deltaX) is left 100% untouched for natural page scrolling
+  // Standard horizontal swipe (deltaX) is preserved untouched for native browser back/forward page navigation!
+  // Standard vertical scrolling (deltaY) is also preserved untouched for natural page scrolling.
   return 'page-scroll';
 }
 

@@ -258,6 +258,95 @@
         return null;
     }
 
+    function isNetflixPage() {
+        return /(^|\.)netflix\.com$/i.test(location.hostname);
+    }
+
+    function isPrimeVideoPage() {
+        return /(^|\.)primevideo\.com$/i.test(location.hostname) ||
+               (/(^|\.)amazon\.[a-z.]+$/i.test(location.hostname) && (location.pathname.includes('/gp/video') || location.pathname.includes('/dp/') || location.pathname.includes('/primevideo')));
+    }
+
+    function isHotstarPage() {
+        return /(^|\.)hotstar\.com$/i.test(location.hostname) ||
+               /(^|\.)jiohotstar\.com$/i.test(location.hostname);
+    }
+
+    function findNetflixMainVideo() {
+        if (!isNetflixPage()) return null;
+        const selectors = [
+            '.watch-video--player-view video',
+            '.VideoContainer video',
+            'div[data-uia="video-canvas"] video',
+            '.nfp video',
+            '.nf-player-container video',
+            'video'
+        ];
+        for (const selector of selectors) {
+            try {
+                const v = document.querySelector(selector);
+                if (v && isUsableVideo(v)) return v;
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    function findPrimeMainVideo() {
+        if (!isPrimeVideoPage()) return null;
+        const selectors = [
+            '.webPlayerUIContainer video',
+            '.rendererContainer video',
+            '.scalingVideoContainer video',
+            'video.webPlayerElement',
+            '.atvwebplayersdk-video-container video',
+            'div[data-testid="renderer-container"] video',
+            'video'
+        ];
+        for (const selector of selectors) {
+            try {
+                const v = document.querySelector(selector);
+                if (v && isUsableVideo(v)) return v;
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    function findHotstarMainVideo() {
+        if (!isHotstarPage()) return null;
+        const selectors = [
+            '.shaka-video-container video',
+            '.bmpui-ui-uicontainer video',
+            'div[data-testid="player-container"] video',
+            '.player-container video',
+            '.video-container video',
+            '#player video',
+            'video'
+        ];
+        for (const selector of selectors) {
+            try {
+                const v = document.querySelector(selector);
+                if (v && isUsableVideo(v)) return v;
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    function isDrmProtected(v) {
+        if (!v) return false;
+        if (v.mediaKeys !== undefined && v.mediaKeys !== null) return true;
+        if (isNetflixPage() || isPrimeVideoPage() || isHotstarPage()) return true;
+        return false;
+    }
+
+    function isVideoActiveAndPlaying(v) {
+        if (!v || !v.isConnected || !(v instanceof HTMLVideoElement)) return false;
+        const rect = v.getBoundingClientRect();
+        if (rect.width < 80 || rect.height < 50) return false;
+        if (v.paused || v.ended) return false;
+        if (v.readyState < 2) return false;
+        return true;
+    }
+
     function inViewport(el) {
         const r = el.getBoundingClientRect();
         return (
@@ -330,6 +419,18 @@
         if (isYouTubePage()) {
             const ytMain = findYouTubeMainVideo();
             if (ytMain) return [ytMain];
+        }
+        if (isNetflixPage()) {
+            const nfMain = findNetflixMainVideo();
+            if (nfMain) return [nfMain];
+        }
+        if (isPrimeVideoPage()) {
+            const pvMain = findPrimeMainVideo();
+            if (pvMain) return [pvMain];
+        }
+        if (isHotstarPage()) {
+            const hsMain = findHotstarMainVideo();
+            if (hsMain) return [hsMain];
         }
 
         const all = queryVideos(document).filter(isVisible);
@@ -652,6 +753,7 @@
 
     function isMediaCrossOrigin(v) {
         if (!v) return false;
+        if (isDrmProtected(v)) return true;
         const src = v.currentSrc || v.src;
         if (!src || src.startsWith('blob:') || src.startsWith('data:')) return false;
         try {
@@ -2173,6 +2275,36 @@
                 return yt;
             }
         }
+        if (isNetflixPage()) {
+            const nf = findNetflixMainVideo();
+            if (nf) {
+                if (video !== nf) {
+                    video = nf;
+                    preferredVideo = nf;
+                }
+                return nf;
+            }
+        }
+        if (isPrimeVideoPage()) {
+            const pv = findPrimeMainVideo();
+            if (pv) {
+                if (video !== pv) {
+                    video = pv;
+                    preferredVideo = pv;
+                }
+                return pv;
+            }
+        }
+        if (isHotstarPage()) {
+            const hs = findHotstarMainVideo();
+            if (hs) {
+                if (video !== hs) {
+                    video = hs;
+                    preferredVideo = hs;
+                }
+                return hs;
+            }
+        }
         if (isUsableVideo(preferredVideo)) return preferredVideo;
         if (isUsableVideo(video)) return video;
         if (video && video.isConnected) return video;
@@ -2377,7 +2509,19 @@
                 return;
             }
 
-            // 3. Normal rate change (from user interaction or site menu)
+            // 3. Platform Speed Enforcement (Netflix / Prime Video / Hotstar reset prevention)
+            if (isNetflixPage() || isPrimeVideoPage() || isHotstarPage()) {
+                if (persistentUserSpeed && Math.abs(n - persistentUserSpeed) > 0.01 && Math.abs(n - 1.0) < 0.01) {
+                    try {
+                        isInternalRateChange = true;
+                        v.playbackRate = persistentUserSpeed;
+                        setTimeout(() => { isInternalRateChange = false; }, 80);
+                    } catch (_) {}
+                    return;
+                }
+            }
+
+            // 4. Normal rate change (from user interaction or site menu)
             // Respect any valid speed cleanly with no feedback loops or resets
             prefs.speed = n;
             persistentUserSpeed = n;
@@ -6066,7 +6210,34 @@
                 }
             }
 
-            // 2. Generic site native fullscreen button (e.g. Hotstar, Netflix, Prime, etc.)
+            // 2. Netflix native fullscreen button
+            if (isNetflixPage()) {
+                const nfFsBtn = document.querySelector('button[data-uia="control-fullscreen-enter"], button[data-uia="control-fullscreen-exit"], button[aria-label*="fullscreen" i]');
+                if (nfFsBtn) {
+                    nfFsBtn.click();
+                    return;
+                }
+            }
+
+            // 3. Amazon Prime Video native fullscreen button
+            if (isPrimeVideoPage()) {
+                const pvFsBtn = document.querySelector('button.fullscreenButton, button[aria-label*="fullscreen" i], button[title*="fullscreen" i]');
+                if (pvFsBtn) {
+                    pvFsBtn.click();
+                    return;
+                }
+            }
+
+            // 4. JioHotstar native fullscreen button
+            if (isHotstarPage()) {
+                const hsFsBtn = document.querySelector('.bmpui-ui-fullscreen-button, button[data-testid="fullscreen-btn"], button[aria-label*="fullscreen" i]');
+                if (hsFsBtn) {
+                    hsFsBtn.click();
+                    return;
+                }
+            }
+
+            // 5. Generic site native fullscreen button
             const siteFsBtn = document.querySelector('[class*="fullscreen" i] button, button[class*="fullscreen" i], [aria-label*="fullscreen" i], [title*="fullscreen" i], button[data-testid*="fullscreen" i]');
             if (siteFsBtn && typeof siteFsBtn.click === 'function') {
                 siteFsBtn.click();
@@ -6243,18 +6414,34 @@
         return points.reduce((sum, p) => sum + p[key], 0) / points.length;
     }
 
+    function isPointInsideVideo(v, x, y) {
+        if (!v || !v.isConnected || !(v instanceof HTMLVideoElement)) return false;
+        try {
+            const rect = v.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+        } catch (_) {
+            return false;
+        }
+    }
+
     function findVideoAtPoint(x, y) {
-        // Fast, direct check for YouTube player
+        // Fast direct checks for main streaming platforms
         if (isYouTubePage()) {
             const yt = findYouTubeMainVideo();
-            if (yt && yt.isConnected && isUsableVideo(yt)) {
-                const rect = yt.getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0 &&
-                    x >= rect.left && x <= rect.right &&
-                    y >= rect.top && y <= rect.bottom) {
-                    return yt;
-                }
-            }
+            if (yt && isPointInsideVideo(yt, x, y)) return yt;
+        }
+        if (isNetflixPage()) {
+            const nf = findNetflixMainVideo();
+            if (nf && isPointInsideVideo(nf, x, y)) return nf;
+        }
+        if (isPrimeVideoPage()) {
+            const pv = findPrimeMainVideo();
+            if (pv && isPointInsideVideo(pv, x, y)) return pv;
+        }
+        if (isHotstarPage()) {
+            const hs = findHotstarMainVideo();
+            if (hs && isPointInsideVideo(hs, x, y)) return hs;
         }
 
         let el = null;
@@ -6262,19 +6449,19 @@
 
         if (el) {
             // 1. Direct video hit
-            if (el instanceof HTMLVideoElement && isUsableVideo(el)) return el;
+            if (el instanceof HTMLVideoElement && isUsableVideo(el) && isPointInsideVideo(el, x, y)) return el;
 
             // 2. Ancestor lookup
             try {
                 const closestVideo = el.closest ? el.closest('video') : null;
-                if (closestVideo && isUsableVideo(closestVideo)) return closestVideo;
+                if (closestVideo && isUsableVideo(closestVideo) && isPointInsideVideo(closestVideo, x, y)) return closestVideo;
             } catch (_) {}
 
             // 3. Child lookup within the hit element
             try {
                 if (el.querySelector) {
                     const childVideo = el.querySelector('video');
-                    if (childVideo && isUsableVideo(childVideo)) return childVideo;
+                    if (childVideo && isUsableVideo(childVideo) && isPointInsideVideo(childVideo, x, y)) return childVideo;
                 }
             } catch (_) {}
 
@@ -6283,7 +6470,7 @@
                 const playerContainer = el.closest ? el.closest('.html5-video-player, #movie_player, .video-js, [class*="player"], [id*="player"], [class*="video-container"], .shaka-video-container, .bmpui-ui-uicontainer, [data-player]') : null;
                 if (playerContainer) {
                     const wrapVideo = playerContainer.querySelector('video');
-                    if (wrapVideo && isUsableVideo(wrapVideo)) return wrapVideo;
+                    if (wrapVideo && isUsableVideo(wrapVideo) && isPointInsideVideo(wrapVideo, x, y)) return wrapVideo;
                 }
             } catch (_) {}
 
@@ -6293,38 +6480,25 @@
                 const inner = curr.shadowRoot.elementFromPoint(x, y);
                 if (!inner || inner === curr) break;
                 curr = inner;
-                if (curr instanceof HTMLVideoElement && isUsableVideo(curr)) return curr;
+                if (curr instanceof HTMLVideoElement && isUsableVideo(curr) && isPointInsideVideo(curr, x, y)) return curr;
                 if (curr.querySelector) {
                     const shadowVideo = curr.querySelector('video');
-                    if (shadowVideo && isUsableVideo(shadowVideo)) return shadowVideo;
+                    if (shadowVideo && isUsableVideo(shadowVideo) && isPointInsideVideo(shadowVideo, x, y)) return shadowVideo;
                 }
             }
         }
 
-        // 6. Active video check (if cursor is within bounds of current video or its player)
+        // 6. Active video check (cursor strictly within video bounds)
         const cur = getVideo();
-        if (cur && isUsableVideo(cur)) {
-            const playerEl = findFullscreenTarget(cur) || cur.parentElement || cur;
-            const r = playerEl.getBoundingClientRect();
-            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
-                return cur;
-            }
+        if (cur && isUsableVideo(cur) && isPointInsideVideo(cur, x, y)) {
+            return cur;
         }
 
-        // 7. Check all tracked videos and any video elements on the page
+        // 7. Check all tracked videos strictly within bounds
         const pool = (videos && videos.length > 0) ? videos : queryVideos(document);
         for (const candidate of pool) {
-            if (!isUsableVideo(candidate)) continue;
-            const rect = candidate.getBoundingClientRect();
-            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+            if (isUsableVideo(candidate) && isPointInsideVideo(candidate, x, y)) {
                 return candidate;
-            }
-            const p = candidate.parentElement;
-            if (p) {
-                const pr = p.getBoundingClientRect();
-                if (x >= pr.left && x <= pr.right && y >= pr.top && y <= pr.bottom) {
-                    return candidate;
-                }
             }
         }
         return null;
@@ -6345,6 +6519,7 @@
             if (target) break;
         }
         if (!target) return;
+        if (!isVideoActiveAndPlaying(target)) return;
 
         gestureVideo = target;
         gestureBaseRate = Number(target.playbackRate) || 1;
@@ -6888,7 +7063,7 @@
                 node.getAttribute?.('role') === 'menuitem' ||
                 node.hasAttribute?.('aria-controls') ||
                 node.classList?.contains('ytp-chrome-bottom') ||
-                Boolean(node.closest?.('.ytp-chrome-bottom, .vjs-control-bar, .art-controls, .jw-controls, .jw-controlbar, .plyr__controls, [class*="progress-bar" i], [class*="scrubber" i]'))
+                Boolean(node.closest?.('.ytp-chrome-bottom, .vjs-control-bar, .art-controls, .jw-controls, .jw-controlbar, .plyr__controls, [class*="progress-bar" i], [class*="scrubber" i], [class*="controls-container" i], [data-uia*="controls" i], [data-uia*="timeline" i], .bmpui-ui-controlbar, .webPlayerControlsContainer'))
             );
         });
     }
@@ -7148,6 +7323,7 @@
 
     document.addEventListener('wheel', e => {
         if (eventIsInsideController(e)) return;
+        if (isEditableEvent(e)) return;
 
         // 1. Wheel over Toolbar Speed Button or popover
         const overSpeedBtn = e.target && e.target.closest && e.target.closest('#tb-speed, .tb-speed-btn, #tb-speed-val, #mvc-speed-popover');
@@ -7219,7 +7395,10 @@
         }
 
         // Two-Finger Pinch (ctrlKey + wheel): adjusts speed smoothly on laptop trackpad
+        // Guard: Video MUST be active and playing! Never triggers if nothing is playing or video is paused.
         if (e.ctrlKey) {
+            if (!isVideoActiveAndPlaying(target)) return;
+
             if (e.cancelable) {
                 try { e.preventDefault(); } catch (_) {}
             }
@@ -7229,22 +7408,13 @@
             return;
         }
 
-        // Horizontal Two-Finger Swipe (Left / Right swipe over video):
-        // Controls speed with smooth precision without hijacking vertical page scrolling!
-        if (Math.abs(e.deltaX) > Math.abs(e.deltaY) + 4 && Math.abs(e.deltaX) > 4) {
-            if (e.cancelable) {
-                try { e.preventDefault(); } catch (_) {}
-            }
-            try { e.stopPropagation(); } catch (_) {}
-
-            const travel = e.deltaX * dir;
-            handleSpeedWheelStep(target, travel, false);
-            return;
-        }
-
-        // CRITICAL: Standard two-finger vertical scrolling (up / down) is NEVER hijacked!
-        // When moving up and down with 2 fingers, the browser scrolls the page/feed/comments completely naturally.
-        // The speed overlay will NEVER appear, speed will NOT change, and page scrolling is 100% smooth!
+        // CRITICAL TRACKPAD & TOUCHPAD BEHAVIORS:
+        // 1. Two-finger horizontal swipe (deltaX) is NEVER intercepted or prevented!
+        //    Standard touchpad back/forward page navigation in Chrome, Edge, Brave, Opera,
+        //    Arc, and Firefox functions completely naturally.
+        // 2. Standard two-finger vertical scrolling (deltaY) is NEVER hijacked!
+        //    Page scrolling, feeds, and comments scroll 100% smoothly without speed changes or overlays.
+        // 3. Gestures never trigger when nothing is playing or when video is paused/idle.
     }, { capture: true, passive: false });
 
     /* =========================================================
